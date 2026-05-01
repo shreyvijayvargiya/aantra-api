@@ -1,0 +1,15 @@
+# Cloudflare Workers (manual) — avoids the broken "Hono" Pages framework auto-setup.
+# Do NOT use Pages + "Framework: Hono" in the wizard; that triggers:
+#   "The detected framework (Hono) cannot be automatically configured"
+#
+# Deploy: npx wrangler deploy
+#
+# The real API (Puppeteer, browser pool, Firebase Admin, etc.) must run on Node:
+#   see Dockerfile, fly.toml — not inside this Worker.
+
+name = "ihatereading-api"
+main = "cf-worker.mjs"
+compatibility_date = "2025-04-01"
+
+# Optional: uncomment for Node APIs used only in compatible Workers code
+# compatibility_flags = [ "nodejs_compat" ]

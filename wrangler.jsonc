@@ -1,0 +1,7 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "hono-api",
+	"main": "index.js",
+	"compatibility_date": "2026-04-05",
+	"type": "module"
+}
