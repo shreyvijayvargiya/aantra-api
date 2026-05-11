@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { streamSSE } from "hono/streaming";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
+import { cors } from "hono/cors";
 import {
 	getVideoTranslateLanguagesResponse,
 	getVideoTranslateCaptionResponse,
@@ -31,7 +32,39 @@ import { UTApi, UTFile } from "uploadthing/server";
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
 
+
+
 const app = new Hono();
+
+// Add CORS middleware
+app.use(
+	"*",
+	cors({
+		origin: [
+			"http://localhost:4001",
+			"http://localhost:3000",
+			"http://localhost:3001",
+			"https://ihatereading.in",
+			"https://www.inkgest.com",
+			"https://aantraa.vercel.app",
+			"https://aantraa.site",
+			"https://gettemplate.website/",
+			"https://swipe-emails.vercel.app",
+		], // Allow specific origins
+		allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+		// Do not set allowHeaders to a fixed list: browsers send Access-Control-Request-Headers
+		// (e.g. authorization, sentry-trace, baggage). Hono mirrors those when allowHeaders is empty.
+		exposeHeaders: [
+			"X-Video-Translate-Id",
+			"X-Caption-Url",
+			"X-Audio-Input-Url",
+			"X-Content-Type-Options",
+			"Cache-Control",
+		],
+		credentials: true,
+		maxAge: 86_400,
+	}),
+);
 export const customLogger = (message, ...rest) => {
 	console.log(message, ...rest);
 };
@@ -72,8 +105,6 @@ setInterval(
 	},
 	5 * 60 * 1000,
 );
-
-console.log(process.env, "env");
 
 /** Response headers for /api/video-translate/* (IDs + caption URL for clients that read headers). */
 function applyVideoTranslateApiHeaders(c, opts = {}) {
