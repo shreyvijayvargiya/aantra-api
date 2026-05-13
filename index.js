@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import { handle } from "@hono/node-server/vercel";
 import { streamSSE } from "hono/streaming";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
@@ -1524,11 +1525,15 @@ app.get("/api/video-translate/:id", async (c) => {
 	return c.json(rest, status);
 });
 
-const port = 3002;
-console.log(`Server is running on port ${port}`);
+const port = Number(process.env.PORT) || 3002;
 
-// Start the server
-serve({
-	fetch: app.fetch,
-	port,
-});
+/** Vercel invokes `index.js` as a Node serverless function; default export must be a handler. */
+export default handle(app);
+
+if (!process.env.VERCEL) {
+	console.log(`Server is running on port ${port}`);
+	serve({
+		fetch: app.fetch,
+		port,
+	});
+}
