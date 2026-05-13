@@ -1525,6 +1525,10 @@ app.get("/api/video-translate/:id", async (c) => {
 	return c.json(rest, status);
 });
 
+app.get("/", (c) => {
+	return c.json({ message: "Hello World" });
+});
+
 const port = Number(process.env.PORT) || 3002;
 
 /** Vercel invokes `index.js` as a Node serverless function; default export must be a handler. */
