@@ -30,12 +30,13 @@ import {
 } from "./lib/groqVideoTranslate.js";
 import { logger } from "hono/logger";
 import { UTApi, UTFile } from "uploadthing/server";
-import { openRouterTranslateAuthMiddleware } from "./lib/translateFirebaseAuth.js";
+import {
+	enforceTranslateAuthResponse,
+	openRouterTranslateAuthMiddleware,
+} from "./lib/translateFirebaseAuth.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-
-
 
 const app = new Hono();
 
@@ -72,7 +73,7 @@ export const customLogger = (message, ...rest) => {
 	console.log(message, ...rest);
 };
 app.use(logger(customLogger));
-/** Firebase ID token + Firestore credits on POST OpenRouter voice/video translate only. */
+/** Firebase Bearer verification (firebase-admin) + credits on POST OpenRouter voice/video translate. */
 app.use("*", openRouterTranslateAuthMiddleware);
 
 const rateLimitMap = new Map(); // Map<ip, { count: number, resetTime: number }>
@@ -128,6 +129,14 @@ function jsonTranslateApi(c, routeLabel, payload, status) {
 		);
 	}
 	return c.json(payload, status);
+}
+
+/** Firebase Bearer verification (firebase-admin); returns a JSON error response or null. */
+async function respondTranslateAuthFailure(c, routeLabel) {
+	const block = await enforceTranslateAuthResponse(c);
+	if (!block) return null;
+	const payload = await block.json();
+	return jsonTranslateApi(c, routeLabel, payload, block.status);
 }
 
 /** Response headers for /api/video-translate/* (IDs + caption URL for clients that read headers). */
@@ -303,23 +312,8 @@ const VOICE_TRANSLATE_TEXT_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
 
 const handleVoiceTranslateTextPost = async (c) => {
 	const vtReqId = uuidv4();
-	const authHdr =
-		c.req.header("Authorization") || c.req.header("authorization");
-	const authToken = authHdr?.startsWith("Bearer ")
-		? authHdr.slice(7).trim()
-		: authHdr?.trim();
-	if (!authToken) {
-		return jsonTranslateApi(
-			c,
-			"voice-translate/text",
-			{
-				error: "Authentication required",
-				code: "MISSING_AUTH_TOKEN",
-				details: "Provide a Bearer token in the Authorization header",
-			},
-			401,
-		);
-	}
+	const authFail = await respondTranslateAuthFailure(c, "voice-translate/text");
+	if (authFail) return authFail;
 
 	const xff = c.req.header("x-forwarded-for");
 	const vtIp =
@@ -916,26 +910,11 @@ function pickAudioSourceUrlFromVoiceFormFields(form) {
  * LLM preset (optional; default Gemini): gemini | gpt-4o-mini | sonnet | kimi | grok — see lib/translateLlmModels.js
  * Cost controls: translation_engine: llm (default) | nllb; tts_engine: openrouter (default) | piper; glossary_refinement: bool;
  *   source_nllb (FLORES) or transcript_language / source_language (ISO) for NLLB source; piper_model; glossary_refine_model (OpenRouter id for glossary pass).
- * Auth: non-empty Authorization (Bearer &lt;token&gt; or raw token string). Rate limited per IP.
+ * Auth: Authorization Bearer &lt;Firebase ID token&gt; (verified via firebase-admin). Rate limited per IP.
  */
 app.post("/api/video-translate", async (c) => {
-	const vtAuthHdr =
-		c.req.header("Authorization") || c.req.header("authorization");
-	const vtAuthToken = vtAuthHdr?.startsWith("Bearer ")
-		? vtAuthHdr.slice(7).trim()
-		: vtAuthHdr?.trim();
-	if (!vtAuthToken) {
-		return jsonTranslateApi(
-			c,
-			"video-translate",
-			{
-				error: "Authentication required",
-				code: "MISSING_AUTH_TOKEN",
-				details: "Provide a Bearer token in the Authorization header",
-			},
-			401,
-		);
-	}
+	const authFail = await respondTranslateAuthFailure(c, "video-translate");
+	if (authFail) return authFail;
 
 	const xff = c.req.header("x-forwarded-for");
 	const vtIp =
@@ -1529,15 +1508,16 @@ app.get("/", (c) => {
 	return c.json({ message: "Hello World" });
 });
 
-const port = Number(process.env.PORT) || 3002;
+const port = Number(process.env.PORT) || 3000;
 
 /** Vercel invokes `index.js` as a Node serverless function; default export must be a handler. */
 export default handle(app);
 
 if (!process.env.VERCEL) {
-	console.log(`Server is running on port ${port}`);
+	console.log(`Server is running on http://0.0.0.0:${port}`);
 	serve({
 		fetch: app.fetch,
 		port,
+		hostname: "0.0.0.0",
 	});
 }
