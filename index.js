@@ -1529,7 +1529,7 @@ app.get("/", (c) => {
 	return c.json({ message: "Hello World" });
 });
 
-const port = Number(process.env.PORT) || 3002;
+const port = Number(process.env.PORT) || 3000;
 
 /** Vercel invokes `index.js` as a Node serverless function; default export must be a handler. */
 export default handle(app);
