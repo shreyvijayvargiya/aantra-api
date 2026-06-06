@@ -32,7 +32,7 @@ import {
 import { logger } from "hono/logger";
 import { UTApi, UTFile } from "uploadthing/server";
 import { openRouterTranslateAuthMiddleware } from "./lib/translateFirebaseAuth.js";
-import { getVideoTranslateProxyManager } from "./lib/proxyManager.js";
+import { getVideoTranslateProxyManager, validateVideoTranslateProxyPoolAtStartup } from "./lib/proxyManager.js";
 import {
 	clientIpFromContext,
 	getTranslateApiLogContext,
@@ -50,6 +50,7 @@ if (videoTranslateProxyPool.hasProxies()) {
 	console.log(
 		`[proxy] video-translate pool ready: ${videoTranslateProxyPool.count} proxies (${videoTranslateProxyPool.getHealthyCount()} healthy)`,
 	);
+	void validateVideoTranslateProxyPoolAtStartup(videoTranslateProxyPool);
 }
 
 const app = new Hono();
