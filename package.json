@@ -31,7 +31,8 @@
 		"pentest:pool": "node tests/test-load.js",
 		"monitor": "node monitor-resources.js",
 		"test:with-monitor": "concurrently \"npm run monitor\" \"npm run test:load\"",
-		"mcp:scrape": "node mcp-scrape-server.js"
+		"mcp:scrape": "node mcp-scrape-server.js",
+		"tts-voices:seed": "node scripts/generate-tts-voice-previews.js"
 	},
 	"dependencies": {
 		"@google/genai": "^1.10.0",

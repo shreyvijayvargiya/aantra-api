@@ -14,6 +14,7 @@ import {
 	VIDEO_TRANSLATE_CAPTION_SSE_MAX_MS,
 	createVideoTranslateJobs,
 	getVideoTranslateJobStatus,
+	getOpenRouterTtsVoicesWithPreviews,
 } from "./lib/videoTranslateOpenRouter.js";
 import {
 	runVoiceTranslateText,
@@ -157,6 +158,18 @@ function applyVideoTranslateApiHeaders(c, opts = {}) {
 app.get("/api/video-translate/languages", async (c) => {
 	applyVideoTranslateApiHeaders(c, { cacheLanguages: true });
 	return c.json(getVideoTranslateLanguagesResponse());
+});
+
+/** OpenRouter Gemini TTS voice catalog + cached UploadThing preview WAVs (`resources/tts-voices.json`). */
+app.get("/api/translate/tts-voices", async (c) => {
+	const out = await getOpenRouterTtsVoicesWithPreviews();
+	c.header("Cache-Control", out.data?.previews_complete ? "public, max-age=3600" : "no-store");
+	return c.json(out);
+});
+app.get("/api/video-translate/tts-voices", async (c) => {
+	const out = await getOpenRouterTtsVoicesWithPreviews();
+	c.header("Cache-Control", out.data?.previews_complete ? "public, max-age=3600" : "no-store");
+	return c.json(out);
 });
 
 app.get("/api/video-translate/caption", async (c) => {
@@ -393,6 +406,9 @@ const handleVoiceTranslateTextPost = async (c) => {
 	let transcriptLanguageOpt;
 	let sourceLanguageOpt;
 	let glossaryRefineModelOpt;
+	let ttsVoiceOpt;
+	let brandVoiceIdOpt;
+	let voiceIdOpt;
 
 	const contentType = c.req.header("content-type") || "";
 
@@ -483,6 +499,15 @@ const handleVoiceTranslateTextPost = async (c) => {
 		if (form.has("glossary_refine_model")) {
 			glossaryRefineModelOpt = String(form.get("glossary_refine_model") ?? "");
 		}
+		if (form.has("tts_voice")) {
+			ttsVoiceOpt = String(form.get("tts_voice") ?? "");
+		}
+		if (form.has("brand_voice_id")) {
+			brandVoiceIdOpt = String(form.get("brand_voice_id") ?? "");
+		}
+		if (form.has("voice_id")) {
+			voiceIdOpt = String(form.get("voice_id") ?? "");
+		}
 	} else if (contentType.includes("application/json")) {
 		let body = {};
 		try {
@@ -509,6 +534,9 @@ const handleVoiceTranslateTextPost = async (c) => {
 		transcriptLanguageOpt = body.transcript_language;
 		sourceLanguageOpt = body.source_language;
 		glossaryRefineModelOpt = body.glossary_refine_model;
+		ttsVoiceOpt = body.tts_voice;
+		brandVoiceIdOpt = body.brand_voice_id;
+		voiceIdOpt = body.voice_id;
 	} else {
 		return jsonTranslateApi(
 			c,
@@ -539,6 +567,9 @@ const handleVoiceTranslateTextPost = async (c) => {
 		transcript_language: transcriptLanguageOpt,
 		source_language: sourceLanguageOpt,
 		glossary_refine_model: glossaryRefineModelOpt,
+		tts_voice: ttsVoiceOpt,
+		brand_voice_id: brandVoiceIdOpt,
+		voice_id: voiceIdOpt,
 		afterTranslatedTts:
 			includeAudio && utTok
 				? (results) =>
@@ -1071,6 +1102,12 @@ app.post("/api/video-translate", async (c) => {
 		if (form.has("brand_voice_id")) {
 			body.brand_voice_id = String(form.get("brand_voice_id") ?? "");
 		}
+		if (form.has("tts_voice")) {
+			body.tts_voice = String(form.get("tts_voice") ?? "");
+		}
+		if (form.has("voice_id")) {
+			body.voice_id = String(form.get("voice_id") ?? "");
+		}
 		if (form.has("callback_url")) {
 			body.callback_url = String(form.get("callback_url") ?? "");
 		}
@@ -1207,6 +1244,9 @@ app.post("/api/video-translate", async (c) => {
 			transcript_language: body.transcript_language,
 			source_language: body.source_language,
 			glossary_refine_model: body.glossary_refine_model,
+			brand_voice_id: body.brand_voice_id,
+			tts_voice: body.tts_voice,
+			voice_id: body.voice_id,
 		},
 	});
 	const status = out.httpStatus ?? 200;

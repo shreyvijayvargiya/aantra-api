@@ -1,0 +1,255 @@
+{
+  "error": null,
+  "data": {
+    "tts_engine": "openrouter",
+    "model": "google/gemini-3.1-flash-tts-preview",
+    "default_voice_id": "gemini-puck",
+    "default_tts_voice": "Puck",
+    "preview_text": "Hello! This is a sample of how I will narrate your translated content.",
+    "voices": [
+      {
+        "id": "gemini-zephyr",
+        "tts_voice": "Zephyr",
+        "label": "Zephyr — Bright",
+        "gender": "female",
+        "style": "Bright",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY2ThCL7yGv8aYwER3mjJuFHt4rhsTgi0foZBC"
+      },
+      {
+        "id": "gemini-puck",
+        "tts_voice": "Puck",
+        "label": "Puck — Upbeat",
+        "gender": "male",
+        "style": "Upbeat",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY0yLh6IYHJXDfMBqh1rKpP6s9Z8AvNIlgE4xY"
+      },
+      {
+        "id": "gemini-charon",
+        "tts_voice": "Charon",
+        "label": "Charon — Informative",
+        "gender": "male",
+        "style": "Informative",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYVYWbAxivTAZwfqQj6H0oWylU289IKdsLFgzJ"
+      },
+      {
+        "id": "gemini-kore",
+        "tts_voice": "Kore",
+        "label": "Kore — Firm",
+        "gender": "female",
+        "style": "Firm",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYRWzs1YGOyknJ521FHVUurQvoE4zTaLctRISe"
+      },
+      {
+        "id": "gemini-fenrir",
+        "tts_voice": "Fenrir",
+        "label": "Fenrir — Excitable",
+        "gender": "male",
+        "style": "Excitable",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY8wBmc7tvEgwNYVcQmlGtqB02iUuxpCSdbOjn"
+      },
+      {
+        "id": "gemini-leda",
+        "tts_voice": "Leda",
+        "label": "Leda — Youthful",
+        "gender": "female",
+        "style": "Youthful",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYjeI605S6Fu1bQOM0p4lVUeY7JgB8RswZoWSE"
+      },
+      {
+        "id": "gemini-orus",
+        "tts_voice": "Orus",
+        "label": "Orus — Firm",
+        "gender": "male",
+        "style": "Firm",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYL1DhH4XvTQ9SV28ZbINjYCotR7Ed3JziOWhF"
+      },
+      {
+        "id": "gemini-aoede",
+        "tts_voice": "Aoede",
+        "label": "Aoede — Breezy",
+        "gender": "female",
+        "style": "Breezy",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYyo7128nwDYs1AMchQFyb07I84jWivdH9mO2R"
+      },
+      {
+        "id": "gemini-callirrhoe",
+        "tts_voice": "Callirrhoe",
+        "label": "Callirrhoe — Easy-going",
+        "gender": "female",
+        "style": "Easy-going",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYsG7S4uEWbPeCnWz7wNuo4HVLUxSBGqrtDyAh"
+      },
+      {
+        "id": "gemini-autonoe",
+        "tts_voice": "Autonoe",
+        "label": "Autonoe — Bright",
+        "gender": "female",
+        "style": "Bright",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY0jxsHuYHJXDfMBqh1rKpP6s9Z8AvNIlgE4xY"
+      },
+      {
+        "id": "gemini-enceladus",
+        "tts_voice": "Enceladus",
+        "label": "Enceladus — Breathy",
+        "gender": "male",
+        "style": "Breathy",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYy84WoTnwDYs1AMchQFyb07I84jWivdH9mO2R"
+      },
+      {
+        "id": "gemini-iapetus",
+        "tts_voice": "Iapetus",
+        "label": "Iapetus — Clear",
+        "gender": "male",
+        "style": "Clear",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYHUvSq58bhJv0eKBzRkf62Go4SDg8sQuOMrp9"
+      },
+      {
+        "id": "gemini-umbriel",
+        "tts_voice": "Umbriel",
+        "label": "Umbriel — Easy-going",
+        "gender": "male",
+        "style": "Easy-going",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYRGtTm5OyknJ521FHVUurQvoE4zTaLctRISeY"
+      },
+      {
+        "id": "gemini-algieba",
+        "tts_voice": "Algieba",
+        "label": "Algieba — Smooth",
+        "gender": "male",
+        "style": "Smooth",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYPrgl0eVfsZTC1GIbAa9pwgzENvjVoJ4eS0OW"
+      },
+      {
+        "id": "gemini-despina",
+        "tts_voice": "Despina",
+        "label": "Despina — Smooth",
+        "gender": "female",
+        "style": "Smooth",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYXPUdvptmbVd2Mtl4Hmexp9KNSOJIvg1WqDs0"
+      },
+      {
+        "id": "gemini-erinome",
+        "tts_voice": "Erinome",
+        "label": "Erinome — Clear",
+        "gender": "female",
+        "style": "Clear",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYdNDMWotB0mAHE68ivjy7GN4WZpIoQk2YdcgF"
+      },
+      {
+        "id": "gemini-algenib",
+        "tts_voice": "Algenib",
+        "label": "Algenib — Gravelly",
+        "gender": "male",
+        "style": "Gravelly",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYA9DCCJEHGZL8fNSDOxQyIaCqpw719ilKV4ej"
+      },
+      {
+        "id": "gemini-rasalgethi",
+        "tts_voice": "Rasalgethi",
+        "label": "Rasalgethi — Informative",
+        "gender": "male",
+        "style": "Informative",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY8IDtiMvEgwNYVcQmlGtqB02iUuxpCSdbOjny"
+      },
+      {
+        "id": "gemini-laomedeia",
+        "tts_voice": "Laomedeia",
+        "label": "Laomedeia — Upbeat",
+        "gender": "female",
+        "style": "Upbeat",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY2aYpOFzyGv8aYwER3mjJuFHt4rhsTgi0foZB"
+      },
+      {
+        "id": "gemini-achernar",
+        "tts_voice": "Achernar",
+        "label": "Achernar — Soft",
+        "gender": "female",
+        "style": "Soft",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYa0qh8fYjL8f2TNZdntqcJF3CAivOQGlMS0pr"
+      },
+      {
+        "id": "gemini-alnilam",
+        "tts_voice": "Alnilam",
+        "label": "Alnilam — Firm",
+        "gender": "male",
+        "style": "Firm",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY35zBRwqCWeogKhF19bTi7I6zQ0q8EafskJrG"
+      },
+      {
+        "id": "gemini-schedar",
+        "tts_voice": "Schedar",
+        "label": "Schedar — Even",
+        "gender": "male",
+        "style": "Even",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRY0rm6nYHJXDfMBqh1rKpP6s9Z8AvNIlgE4xYa"
+      },
+      {
+        "id": "gemini-gacrux",
+        "tts_voice": "Gacrux",
+        "label": "Gacrux — Mature",
+        "gender": "female",
+        "style": "Mature",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYQInlrFR1Xc2ZbTm83KoAvS6kGPrDjlf5ROgY"
+      },
+      {
+        "id": "gemini-pulcherrima",
+        "tts_voice": "Pulcherrima",
+        "label": "Pulcherrima — Forward",
+        "gender": "female",
+        "style": "Forward",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYwusYypcvoJNVKSmrBdMGYtLXHp4qkafZuOz1"
+      },
+      {
+        "id": "gemini-achird",
+        "tts_voice": "Achird",
+        "label": "Achird — Friendly",
+        "gender": "male",
+        "style": "Friendly",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYi3wm1AFlKavenfPpi3Zb1mAg4d50CY2RWLOs"
+      },
+      {
+        "id": "gemini-zubenelgenubi",
+        "tts_voice": "Zubenelgenubi",
+        "label": "Zubenelgenubi — Casual",
+        "gender": "male",
+        "style": "Casual",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYaukSGrjL8f2TNZdntqcJF3CAivOQGlMS0prw"
+      },
+      {
+        "id": "gemini-vindemiatrix",
+        "tts_voice": "Vindemiatrix",
+        "label": "Vindemiatrix — Gentle",
+        "gender": "female",
+        "style": "Gentle",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYAVctuaEHGZL8fNSDOxQyIaCqpw719ilKV4ej"
+      },
+      {
+        "id": "gemini-sadachbia",
+        "tts_voice": "Sadachbia",
+        "label": "Sadachbia — Lively",
+        "gender": "male",
+        "style": "Lively",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYt6BxuHIimOKe2MwDjzg4bqv9lnLGdNyJVHWX"
+      },
+      {
+        "id": "gemini-sadaltager",
+        "tts_voice": "Sadaltager",
+        "label": "Sadaltager — Knowledgeable",
+        "gender": "male",
+        "style": "Knowledgeable",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYBq6MiPJt8W16NkSEspMAH9mbVJjylwPKQur5"
+      },
+      {
+        "id": "gemini-sulafat",
+        "tts_voice": "Sulafat",
+        "label": "Sulafat — Warm",
+        "gender": "female",
+        "style": "Warm",
+        "audio_url": "https://b4fcijccdw.ufs.sh/f/mVUSE925dTRYTQup64H176gEYQeNBjdHDc0La8obWsmZnJPI"
+      }
+    ],
+    "preview_generation_error": null,
+    "previews_complete": true,
+    "previews_pending_count": 0
+  }
+}
