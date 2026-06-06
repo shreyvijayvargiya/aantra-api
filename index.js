@@ -31,11 +31,17 @@ import {
 import { logger } from "hono/logger";
 import { UTApi, UTFile } from "uploadthing/server";
 import { openRouterTranslateAuthMiddleware } from "./lib/translateFirebaseAuth.js";
+import { getVideoTranslateProxyManager } from "./lib/proxyManager.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
 
-
+const videoTranslateProxyPool = getVideoTranslateProxyManager();
+if (videoTranslateProxyPool.hasProxies()) {
+	console.log(
+		`[proxy] video-translate pool ready: ${videoTranslateProxyPool.count} proxies (${videoTranslateProxyPool.getHealthyCount()} healthy)`,
+	);
+}
 
 const app = new Hono();
 
@@ -1534,10 +1540,8 @@ const port = Number(process.env.PORT) || 3000;
 /** Vercel invokes `index.js` as a Node serverless function; default export must be a handler. */
 export default handle(app);
 
-if (!process.env.VERCEL) {
-	console.log(`Server is running on port ${port}`);
-	serve({
-		fetch: app.fetch,
-		port,
-	});
-}
+console.log(`Server is running on port ${port}`);
+serve({
+	fetch: app.fetch,
+	port,
+});

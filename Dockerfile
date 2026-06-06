@@ -37,10 +37,10 @@ RUN npm prune --omit=dev
 # Final stage for app image
 FROM base
 
-# Install packages needed for deployment (ffmpeg + yt-dlp for video translate)
+# ffmpeg + standalone yt-dlp (no Python; script build needs python3 on slim images)
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y chromium chromium-sandbox ffmpeg curl ca-certificates && \
-    curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/bin/yt-dlp && \
+    curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/bin/yt-dlp && \
     chmod a+rx /usr/bin/yt-dlp && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
