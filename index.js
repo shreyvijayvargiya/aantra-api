@@ -33,6 +33,14 @@ import { logger } from "hono/logger";
 import { UTApi, UTFile } from "uploadthing/server";
 import { openRouterTranslateAuthMiddleware } from "./lib/translateFirebaseAuth.js";
 import { getVideoTranslateProxyManager } from "./lib/proxyManager.js";
+import {
+	clientIpFromContext,
+	getTranslateApiLogContext,
+	scheduleTranslationApiLog,
+	setTranslateApiLogContext,
+	appendTranslateApiLogParams,
+	buildFallbackTranslateApiLogContext,
+} from "./lib/translateApiLogger.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
@@ -127,6 +135,9 @@ setInterval(
  */
 function jsonTranslateApi(c, routeLabel, payload, status) {
 	const code = Number(status) || 0;
+	const logCtx =
+		getTranslateApiLogContext(c) ?? buildFallbackTranslateApiLogContext(c, routeLabel);
+	scheduleTranslationApiLog(c, routeLabel, payload, status, logCtx);
 	if (code >= 400) {
 		console.error(
 			`[translate-api:${routeLabel}] ${c.req.method} ${c.req.path} HTTP ${code}`,
@@ -322,6 +333,18 @@ const VOICE_TRANSLATE_TEXT_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
 
 const handleVoiceTranslateTextPost = async (c) => {
 	const vtReqId = uuidv4();
+	const vtIp = clientIpFromContext(c);
+	const voiceRouteLabel = c.req.path.includes("/video-translate/text")
+		? "video-translate/text"
+		: "voice-translate/text";
+	setTranslateApiLogContext(c, {
+		routeLabel: voiceRouteLabel,
+		provider: "openrouter",
+		apiKind: "voice_translate",
+		requestId: vtReqId,
+		clientIp: vtIp,
+	});
+
 	const authHdr =
 		c.req.header("Authorization") || c.req.header("authorization");
 	const authToken = authHdr?.startsWith("Bearer ")
@@ -330,7 +353,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 	if (!authToken) {
 		return jsonTranslateApi(
 			c,
-			"voice-translate/text",
+			voiceRouteLabel,
 			{
 				error: "Authentication required",
 				code: "MISSING_AUTH_TOKEN",
@@ -340,12 +363,6 @@ const handleVoiceTranslateTextPost = async (c) => {
 		);
 	}
 
-	const xff = c.req.header("x-forwarded-for");
-	const vtIp =
-		xff?.split(",")?.[0]?.trim() ||
-		c.req.header("x-real-ip") ||
-		c.req.header("cf-connecting-ip") ||
-		"unknown";
 	const rl = rateLimit(
 		vtIp,
 		VOICE_TRANSLATE_TEXT_POST_RATE_LIMIT,
@@ -358,7 +375,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 		c.header("X-RateLimit-Window", "10 minutes");
 		return jsonTranslateApi(
 			c,
-			"voice-translate/text",
+			voiceRouteLabel,
 			{
 				success: false,
 				error: "Rate limit exceeded",
@@ -411,6 +428,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 	let voiceIdOpt;
 
 	const contentType = c.req.header("content-type") || "";
+	appendTranslateApiLogParams(c, { content_type: contentType || null });
 
 	if (contentType.includes("multipart/form-data")) {
 		let form;
@@ -419,7 +437,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 		} catch {
 			return jsonTranslateApi(
 				c,
-				"voice-translate/text",
+				voiceRouteLabel,
 				{ error: "Invalid multipart/form-data payload" },
 				400,
 			);
@@ -433,7 +451,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 			if (!process.env.UPLOADTHING_TOKEN) {
 				return jsonTranslateApi(
 					c,
-					"voice-translate/text",
+					voiceRouteLabel,
 					{
 						error:
 							"UPLOADTHING_TOKEN not configured (required to upload audio files)",
@@ -456,7 +474,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 			} catch (e) {
 				return jsonTranslateApi(
 					c,
-					"voice-translate/text",
+					voiceRouteLabel,
 					{ error: e?.message || "Audio upload failed" },
 					502,
 				);
@@ -515,7 +533,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 		} catch {
 			return jsonTranslateApi(
 				c,
-				"voice-translate/text",
+				voiceRouteLabel,
 				{ error: "Invalid JSON body" },
 				400,
 			);
@@ -540,7 +558,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 	} else {
 		return jsonTranslateApi(
 			c,
-			"voice-translate/text",
+			voiceRouteLabel,
 			{
 				error:
 					"Unsupported Content-Type. Use application/json or multipart/form-data.",
@@ -550,6 +568,28 @@ const handleVoiceTranslateTextPost = async (c) => {
 	}
 
 	const utTok = process.env.UPLOADTHING_TOKEN?.trim();
+	appendTranslateApiLogParams(c, {
+		text_length: typeof text === "string" ? text.length : 0,
+		has_text: Boolean(String(text ?? "").trim()),
+		audio_url: audioUrl ? String(audioUrl).trim() : null,
+		audio_upload_byte_length: audioBuffer?.length ?? null,
+		audio_format: audioFormat ?? null,
+		languages,
+		include_audio: includeAudio,
+		model: modelOpt ?? null,
+		llm_model: llmModelOpt ?? null,
+		translation_engine: translationEngineOpt ?? null,
+		tts_engine: ttsEngineOpt ?? null,
+		glossary_refinement: glossaryRefinementOpt ?? null,
+		piper_model: piperModelOpt ?? null,
+		source_nllb: sourceNllbOpt ?? null,
+		transcript_language: transcriptLanguageOpt ?? null,
+		source_language: sourceLanguageOpt ?? null,
+		glossary_refine_model: glossaryRefineModelOpt ?? null,
+		tts_voice: ttsVoiceOpt ?? null,
+		brand_voice_id: brandVoiceIdOpt ?? null,
+		voice_id: voiceIdOpt ?? null,
+	});
 	const out = await runVoiceTranslateText({
 		text,
 		audioUrl: audioUrl ? String(audioUrl).trim() : undefined,
@@ -587,7 +627,7 @@ const handleVoiceTranslateTextPost = async (c) => {
 	if (audioUrl && rest?.data && typeof rest.data === "object") {
 		c.header("X-Audio-Input-Url", String(audioUrl).slice(0, 2048));
 	}
-	return jsonTranslateApi(c, "voice-translate/text", rest, status);
+	return jsonTranslateApi(c, voiceRouteLabel, rest, status);
 };
 
 app.post("/api/voice-translate/text", handleVoiceTranslateTextPost);
@@ -602,13 +642,27 @@ app.post("/api/video-translate/text", handleVoiceTranslateTextPost);
  */
 const handleGroqVoiceTranslateTextPost = async (c) => {
 	const vtReqId = uuidv4();
+	const vtIp = clientIpFromContext(c);
+	const groqVoiceRouteLabel = c.req.path.includes("/video-translate/text")
+		? "groq/video-translate/text"
+		: "groq/voice-translate/text";
+	setTranslateApiLogContext(c, {
+		routeLabel: groqVoiceRouteLabel,
+		provider: "groq",
+		apiKind: "voice_translate",
+		requestId: vtReqId,
+		clientIp: vtIp,
+	});
+
 	const authHdr =
 		c.req.header("Authorization") || c.req.header("authorization");
 	const authToken = authHdr?.startsWith("Bearer ")
 		? authHdr.slice(7).trim()
 		: authHdr?.trim();
 	if (!authToken) {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			groqVoiceRouteLabel,
 			{
 				error: "Authentication required",
 				code: "MISSING_AUTH_TOKEN",
@@ -618,12 +672,6 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 		);
 	}
 
-	const xff = c.req.header("x-forwarded-for");
-	const vtIp =
-		xff?.split(",")?.[0]?.trim() ||
-		c.req.header("x-real-ip") ||
-		c.req.header("cf-connecting-ip") ||
-		"unknown";
 	const rl = rateLimit(
 		vtIp,
 		VOICE_TRANSLATE_TEXT_POST_RATE_LIMIT,
@@ -634,7 +682,9 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 		c.header("X-RateLimit-Limit", String(VOICE_TRANSLATE_TEXT_POST_RATE_LIMIT));
 		c.header("X-RateLimit-Remaining", "0");
 		c.header("X-RateLimit-Window", "10 minutes");
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			groqVoiceRouteLabel,
 			{
 				success: false,
 				error: "Rate limit exceeded",
@@ -676,13 +726,16 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 	let llmModelOpt;
 
 	const contentType = c.req.header("content-type") || "";
+	appendTranslateApiLogParams(c, { content_type: contentType || null });
 
 	if (contentType.includes("multipart/form-data")) {
 		let form;
 		try {
 			form = await c.req.formData();
 		} catch {
-			return c.json(
+			return jsonTranslateApi(
+				c,
+				groqVoiceRouteLabel,
 				{ error: "Invalid multipart/form-data payload" },
 				400,
 			);
@@ -694,7 +747,9 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 			"arrayBuffer" in fileField
 		) {
 			if (!process.env.UPLOADTHING_TOKEN) {
-				return c.json(
+				return jsonTranslateApi(
+					c,
+					groqVoiceRouteLabel,
 					{
 						error:
 							"UPLOADTHING_TOKEN not configured (required to upload audio files)",
@@ -715,7 +770,9 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 				);
 				audioUrl = uploadedUrl;
 			} catch (e) {
-				return c.json(
+				return jsonTranslateApi(
+					c,
+					groqVoiceRouteLabel,
 					{ error: e?.message || "Audio upload failed" },
 					502,
 				);
@@ -739,7 +796,12 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 		try {
 			body = await c.req.json();
 		} catch {
-			return c.json({ error: "Invalid JSON body" }, 400);
+			return jsonTranslateApi(
+				c,
+				groqVoiceRouteLabel,
+				{ error: "Invalid JSON body" },
+				400,
+			);
 		}
 		text = body.text ?? body.source_text;
 		audioUrl = pickAudioSourceUrlFromVoiceJsonBody(body);
@@ -748,7 +810,9 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 		modelOpt = body.model;
 		llmModelOpt = body.llm_model;
 	} else {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			groqVoiceRouteLabel,
 			{
 				error:
 					"Unsupported Content-Type. Use application/json or multipart/form-data.",
@@ -758,6 +822,17 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 	}
 
 	const utTok = process.env.UPLOADTHING_TOKEN?.trim();
+	appendTranslateApiLogParams(c, {
+		text_length: typeof text === "string" ? text.length : 0,
+		has_text: Boolean(String(text ?? "").trim()),
+		audio_url: audioUrl ? String(audioUrl).trim() : null,
+		audio_upload_byte_length: audioBuffer?.length ?? null,
+		audio_format: audioFormat ?? null,
+		languages,
+		include_audio: includeAudio,
+		model: modelOpt ?? null,
+		llm_model: llmModelOpt ?? null,
+	});
 	const out = await runGroqVoiceTranslateText({
 		text,
 		audioUrl: audioUrl ? String(audioUrl).trim() : undefined,
@@ -784,9 +859,8 @@ const handleGroqVoiceTranslateTextPost = async (c) => {
 	if (audioUrl && rest?.data && typeof rest.data === "object") {
 		c.header("X-Audio-Input-Url", String(audioUrl).slice(0, 2048));
 	}
-	return c.json(rest, status);
+	return jsonTranslateApi(c, groqVoiceRouteLabel, rest, status);
 };
-
 app.post("/api/groq/voice-translate/text", handleGroqVoiceTranslateTextPost);
 app.post("/api/groq/video-translate/text", handleGroqVoiceTranslateTextPost);
 
@@ -956,6 +1030,16 @@ function pickAudioSourceUrlFromVoiceFormFields(form) {
  * Auth: non-empty Authorization (Bearer &lt;token&gt; or raw token string). Rate limited per IP.
  */
 app.post("/api/video-translate", async (c) => {
+	const vtVideoReqId = uuidv4();
+	const vtVideoIp = clientIpFromContext(c);
+	setTranslateApiLogContext(c, {
+		routeLabel: "video-translate",
+		provider: "openrouter",
+		apiKind: "video_translate",
+		requestId: vtVideoReqId,
+		clientIp: vtVideoIp,
+	});
+
 	const vtAuthHdr =
 		c.req.header("Authorization") || c.req.header("authorization");
 	const vtAuthToken = vtAuthHdr?.startsWith("Bearer ")
@@ -1004,12 +1088,14 @@ app.post("/api/video-translate", async (c) => {
 	c.header("X-RateLimit-Limit", String(VIDEO_TRANSLATE_POST_RATE_LIMIT));
 	c.header("X-RateLimit-Remaining", String(vtRl.remaining));
 	c.header("X-RateLimit-Window", "10 minutes");
+	c.header("X-Video-Translate-Request-Id", vtVideoReqId);
 
 	const contentType = c.req.header("content-type") || "";
 	let videoUrl;
 	let body = {};
 
 	const parseBool = (v) => v === true || v === "true" || v === "1";
+	appendTranslateApiLogParams(c, { content_type: contentType || null });
 
 	if (contentType.includes("multipart/form-data")) {
 		let form;
@@ -1223,6 +1309,35 @@ app.post("/api/video-translate", async (c) => {
 	if (body.brand_voice_id) payload.brand_voice_id = body.brand_voice_id;
 	if (body.callback_url) payload.callback_url = body.callback_url;
 
+	appendTranslateApiLogParams(c, {
+		video_url: payload.video_url,
+		output_language: payload.output_language ?? null,
+		output_languages: payload.output_languages ?? null,
+		title: payload.title ?? body.title ?? null,
+		translate_audio_only: payload.translate_audio_only ?? null,
+		keep_the_same_format: payload.keep_the_same_format ?? null,
+		mode: payload.mode ?? null,
+		speaker_num: payload.speaker_num ?? null,
+		callback_id: payload.callback_id ?? null,
+		plan: body.plan ?? null,
+		user_plan: body.user_plan ?? null,
+		subscription_plan: body.subscription_plan ?? null,
+		tier: body.tier ?? null,
+		model: body.model ?? null,
+		llm_model: body.llm_model ?? null,
+		translation_engine: body.translation_engine ?? null,
+		tts_engine: body.tts_engine ?? null,
+		glossary_refinement: body.glossary_refinement ?? null,
+		piper_model: body.piper_model ?? null,
+		source_nllb: body.source_nllb ?? null,
+		transcript_language: body.transcript_language ?? null,
+		source_language: body.source_language ?? null,
+		glossary_refine_model: body.glossary_refine_model ?? null,
+		brand_voice_id: body.brand_voice_id ?? null,
+		tts_voice: body.tts_voice ?? null,
+		voice_id: body.voice_id ?? null,
+	});
+
 	const out = await createVideoTranslateJobs({
 		videoUrl: payload.video_url,
 		body: {
@@ -1269,13 +1384,25 @@ app.post("/api/video-translate", async (c) => {
  * Cost options: translation_engine: llm (default) | nllb; tts_engine: groq (default) | piper; glossary_refinement; source_nllb or transcript_language.
  */
 app.post("/api/groq/video-translate", async (c) => {
+	const groqVideoReqId = uuidv4();
+	const groqVideoIp = clientIpFromContext(c);
+	setTranslateApiLogContext(c, {
+		routeLabel: "groq/video-translate",
+		provider: "groq",
+		apiKind: "video_translate",
+		requestId: groqVideoReqId,
+		clientIp: groqVideoIp,
+	});
+
 	const vtAuthHdr =
 		c.req.header("Authorization") || c.req.header("authorization");
 	const vtAuthToken = vtAuthHdr?.startsWith("Bearer ")
 		? vtAuthHdr.slice(7).trim()
 		: vtAuthHdr?.trim();
 	if (!vtAuthToken) {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			"groq/video-translate",
 			{
 				error: "Authentication required",
 				code: "MISSING_AUTH_TOKEN",
@@ -1285,14 +1412,8 @@ app.post("/api/groq/video-translate", async (c) => {
 		);
 	}
 
-	const xff = c.req.header("x-forwarded-for");
-	const vtIp =
-		xff?.split(",")?.[0]?.trim() ||
-		c.req.header("x-real-ip") ||
-		c.req.header("cf-connecting-ip") ||
-		"unknown";
 	const vtRl = rateLimit(
-		vtIp,
+		groqVideoIp,
 		VIDEO_TRANSLATE_POST_RATE_LIMIT,
 		VIDEO_TRANSLATE_POST_RATE_WINDOW_MS,
 	);
@@ -1301,7 +1422,9 @@ app.post("/api/groq/video-translate", async (c) => {
 		c.header("X-RateLimit-Limit", String(VIDEO_TRANSLATE_POST_RATE_LIMIT));
 		c.header("X-RateLimit-Remaining", "0");
 		c.header("X-RateLimit-Window", "10 minutes");
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			"groq/video-translate",
 			{
 				success: false,
 				error: "Rate limit exceeded",
@@ -1314,19 +1437,23 @@ app.post("/api/groq/video-translate", async (c) => {
 	c.header("X-RateLimit-Remaining", String(vtRl.remaining));
 	c.header("X-RateLimit-Window", "10 minutes");
 	c.header("X-Translate-Engine", "groq");
+	c.header("X-Video-Translate-Request-Id", groqVideoReqId);
 
 	const contentType = c.req.header("content-type") || "";
 	let videoUrl;
 	let body = {};
 
 	const parseBool = (v) => v === true || v === "true" || v === "1";
+	appendTranslateApiLogParams(c, { content_type: contentType || null });
 
 	if (contentType.includes("multipart/form-data")) {
 		let form;
 		try {
 			form = await c.req.formData();
 		} catch {
-			return c.json(
+			return jsonTranslateApi(
+				c,
+				"groq/video-translate",
 				{
 					error:
 						"Invalid multipart/form-data payload. Use proper multipart encoding (-F in curl) or send JSON.",
@@ -1341,7 +1468,9 @@ app.post("/api/groq/video-translate", async (c) => {
 			"arrayBuffer" in fileField
 		) {
 			if (!process.env.UPLOADTHING_TOKEN) {
-				return c.json(
+				return jsonTranslateApi(
+					c,
+					"groq/video-translate",
 					{
 						error:
 							"UPLOADTHING_TOKEN not configured (required to upload video files)",
@@ -1450,11 +1579,18 @@ app.post("/api/groq/video-translate", async (c) => {
 		try {
 			body = await c.req.json();
 		} catch {
-			return c.json({ error: "Invalid JSON body" }, 400);
+			return jsonTranslateApi(
+				c,
+				"groq/video-translate",
+				{ error: "Invalid JSON body" },
+				400,
+			);
 		}
 		videoUrl = pickVideoUrlFromJsonBody(body);
 	} else {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			"groq/video-translate",
 			{
 				error: "Unsupported Content-Type. Use application/json or multipart/form-data.",
 			},
@@ -1463,7 +1599,9 @@ app.post("/api/groq/video-translate", async (c) => {
 	}
 
 	if (!videoUrl || !String(videoUrl).trim()) {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			"groq/video-translate",
 			{
 				error:
 					"Provide video_url, videoUrl, url, or video (string URL), or upload a file (field: file or video)",
@@ -1473,13 +1611,17 @@ app.post("/api/groq/video-translate", async (c) => {
 	}
 
 	if (!body.output_language && !body.output_languages) {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			"groq/video-translate",
 			{ error: "Provide output_language or output_languages" },
 			400,
 		);
 	}
 	if (body.output_language && body.output_languages) {
-		return c.json(
+		return jsonTranslateApi(
+			c,
+			"groq/video-translate",
 			{ error: "Use only one of output_language or output_languages" },
 			400,
 		);
@@ -1506,6 +1648,19 @@ app.post("/api/groq/video-translate", async (c) => {
 	}
 	if (body.brand_voice_id) payload.brand_voice_id = body.brand_voice_id;
 	if (body.callback_url) payload.callback_url = body.callback_url;
+
+	appendTranslateApiLogParams(c, {
+		video_url: payload.video_url,
+		output_language: payload.output_language ?? null,
+		output_languages: payload.output_languages ?? null,
+		title: payload.title ?? body.title ?? null,
+		translation_engine: body.translation_engine ?? null,
+		tts_engine: body.tts_engine ?? null,
+		glossary_refinement: body.glossary_refinement ?? null,
+		model: body.model ?? null,
+		llm_model: body.llm_model ?? null,
+		brand_voice_id: body.brand_voice_id ?? null,
+	});
 
 	const out = await createGroqVideoTranslateJobs({
 		videoUrl: payload.video_url,
@@ -1540,7 +1695,7 @@ app.post("/api/groq/video-translate", async (c) => {
 		videoTranslateId: createdId,
 		captionUrl: rest?.data?.caption_url,
 	});
-	return c.json(rest, status);
+	return jsonTranslateApi(c, "groq/video-translate", rest, status);
 });
 
 /** GET /api/groq/video-translate/:id — Groq job status (collection groqVideoTranslateJobs) */
