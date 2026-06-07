@@ -15,6 +15,7 @@ import {
 	createVideoTranslateJobs,
 	getVideoTranslateJobStatus,
 	getOpenRouterTtsVoicesWithPreviews,
+	logYtDlpCookiesAtStartup,
 } from "./lib/videoTranslateOpenRouter.js";
 import {
 	runVoiceTranslateText,
@@ -32,7 +33,11 @@ import {
 import { logger } from "hono/logger";
 import { UTApi, UTFile } from "uploadthing/server";
 import { openRouterTranslateAuthMiddleware } from "./lib/translateFirebaseAuth.js";
-import { getVideoTranslateProxyManager, validateVideoTranslateProxyPoolAtStartup } from "./lib/proxyManager.js";
+import {
+	getVideoTranslateProxyManager,
+	shouldUseVideoTranslateProxies,
+	validateVideoTranslateProxyPoolAtStartup,
+} from "./lib/proxyManager.js";
 import {
 	clientIpFromContext,
 	getTranslateApiLogContext,
@@ -47,11 +52,17 @@ const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
 
 const videoTranslateProxyPool = getVideoTranslateProxyManager();
 if (videoTranslateProxyPool.hasProxies()) {
+	const useProxies = shouldUseVideoTranslateProxies();
 	console.log(
-		`[proxy] video-translate pool ready: ${videoTranslateProxyPool.count} proxies (${videoTranslateProxyPool.getHealthyCount()} healthy)`,
+		useProxies
+			? `[proxy] video-translate pool ready: ${videoTranslateProxyPool.count} proxies (${videoTranslateProxyPool.getHealthyCount()} healthy)`
+			: `[proxy] video-translate pool loaded: ${videoTranslateProxyPool.count} proxies (skipped locally — direct yt-dlp; set VIDEO_TRANSLATE_PROXY_ENABLED=1 to test proxy)`,
 	);
-	void validateVideoTranslateProxyPoolAtStartup(videoTranslateProxyPool);
+	if (useProxies) {
+		void validateVideoTranslateProxyPoolAtStartup(videoTranslateProxyPool);
+	}
 }
+void logYtDlpCookiesAtStartup();
 
 const app = new Hono();
 
@@ -63,6 +74,8 @@ app.use(
 			"http://localhost:4001",
 			"http://localhost:3000",
 			"http://localhost:3001",
+			"http://localhost:3002",
+			"http://localhost:3003",
 			"https://ihatereading.in",
 			"https://www.inkgest.com",
 			"https://aantraa.vercel.app",

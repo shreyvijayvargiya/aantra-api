@@ -1,0 +1,137 @@
+[
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-185.150.85.170",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-45.154.194.148",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-104.244.83.140",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-58.97.241.46",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-103.250.82.245",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-83.229.13.167",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-80.240.120.78",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-121.91.189.75",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-176.119.9.105",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-185.125.193.152",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-119.13.224.187",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-154.30.98.10",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-209.242.213.180",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-176.53.216.91",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    },
+    {
+        "host": "brd.superproxy.io",
+        "port": 33335,
+        "username": "brd-customer-hl_ba1a3411-zone-residential_proxy1-62.241.59.134",
+        "password": "iu6aiayyf40n",
+        "lastUsed": 0,
+        "failCount": 0,
+        "isHealthy": true
+    }
+]
