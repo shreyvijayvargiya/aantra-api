@@ -46,6 +46,8 @@ import {
 	appendTranslateApiLogParams,
 	buildFallbackTranslateApiLogContext,
 } from "./lib/translateApiLogger.js";
+import { createVideoCaptionJob, getVideoCaptionJobStatus } from "./lib/videoCaptionGenerator.js";
+import { createViralClipCutJob, getViralClipCutJobStatus } from "./lib/viralClipCutter.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
@@ -1744,9 +1746,437 @@ app.get("/", (c) => {
 	return c.json({ message: "Hello World" });
 });
 
+// ─── AI video caption generator (OpenRouter + FFmpeg + UploadThing) ─────────────
+//
+// POST /api/video-caption — { video_url, language | output_language | caption_language, caption_style?, caption_mode?, burn_captions?, model? }
+// multipart: file or video + optional fields above
+// GET  /api/video-caption/:id — job status; returns captioned video URL when success
+
+function applyVideoCaptionApiHeaders(c, opts = {}) {
+	const { videoCaptionId, captionUrl, captionedVideoUrl } = opts;
+	c.header("X-Content-Type-Options", "nosniff");
+	c.header("Cache-Control", "no-store, private, max-age=0");
+	if (videoCaptionId) {
+		c.header("X-Video-Caption-Id", String(videoCaptionId));
+	}
+	if (captionUrl) {
+		c.header("X-Caption-Url", String(captionUrl));
+	}
+	if (captionedVideoUrl) {
+		c.header("X-Captioned-Video-Url", String(captionedVideoUrl));
+	}
+}
+
+const VIDEO_CAPTION_POST_RATE_LIMIT = 10;
+const VIDEO_CAPTION_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * POST /api/video-caption
+ * JSON: { video_url | videoUrl, language | output_language | caption_language, caption_style?, caption_mode?, burn_captions?, model | llm_model? }
+ * multipart: file or video (uploads to UploadThing), optional video_url, language, output_language, caption_style (top|bottom), etc.
+ * Auth: non-empty Authorization (Bearer token). Rate limited per IP.
+ */
+app.post("/api/video-caption", async (c) => {
+	const authHdr =
+		c.req.header("Authorization") || c.req.header("authorization");
+	const authToken = authHdr?.startsWith("Bearer ")
+		? authHdr.slice(7).trim()
+		: authHdr?.trim();
+	if (!authToken) {
+		return c.json(
+			{
+				error: "Authentication required",
+				code: "MISSING_AUTH_TOKEN",
+				details: "Provide a Bearer token in the Authorization header",
+			},
+			401,
+		);
+	}
+
+	const xff = c.req.header("x-forwarded-for");
+	const clientIp =
+		xff?.split(",")?.[0]?.trim() ||
+		c.req.header("x-real-ip") ||
+		c.req.header("cf-connecting-ip") ||
+		"unknown";
+	const rl = rateLimit(
+		clientIp,
+		VIDEO_CAPTION_POST_RATE_LIMIT,
+		VIDEO_CAPTION_POST_RATE_WINDOW_MS,
+	);
+	if (!rl.allowed) {
+		c.header("Retry-After", String(rl.retryAfter));
+		c.header("X-RateLimit-Limit", String(VIDEO_CAPTION_POST_RATE_LIMIT));
+		c.header("X-RateLimit-Remaining", "0");
+		c.header("X-RateLimit-Window", "10 minutes");
+		return c.json(
+			{
+				success: false,
+				error: "Rate limit exceeded",
+				retryAfter: rl.retryAfter,
+			},
+			429,
+		);
+	}
+	c.header("X-RateLimit-Limit", String(VIDEO_CAPTION_POST_RATE_LIMIT));
+	c.header("X-RateLimit-Remaining", String(rl.remaining));
+	c.header("X-RateLimit-Window", "10 minutes");
+
+	const contentType = c.req.header("content-type") || "";
+	let videoUrl;
+	let body = {};
+
+	if (contentType.includes("multipart/form-data")) {
+		let form;
+		try {
+			form = await c.req.formData();
+		} catch {
+			return c.json(
+				{
+					error:
+						"Invalid multipart/form-data payload. Use proper multipart encoding (-F in curl) or send JSON.",
+				},
+				400,
+			);
+		}
+		const fileField = form.get("file") || form.get("video");
+		if (
+			fileField &&
+			typeof fileField === "object" &&
+			"arrayBuffer" in fileField
+		) {
+			if (!process.env.UPLOADTHING_TOKEN) {
+				return c.json(
+					{
+						error:
+							"UPLOADTHING_TOKEN not configured (required to upload video files)",
+						code: "MISSING_UPLOAD_TOKEN",
+					},
+					503,
+				);
+			}
+			try {
+				const ab = await fileField.arrayBuffer();
+				const buf = Buffer.from(ab);
+				const origName =
+					typeof fileField.name === "string" ? fileField.name : "upload.mp4";
+				videoUrl = await uploadVideoBufferToUploadThing(buf, origName);
+			} catch (e) {
+				return c.json(
+					{ error: e?.message || "Video upload failed" },
+					502,
+				);
+			}
+		}
+		if (!videoUrl) {
+			videoUrl = form.get("video_url") || form.get("videoUrl");
+		}
+		if (form.has("language")) body.language = String(form.get("language") ?? "");
+		if (form.has("caption_language")) {
+			body.caption_language = String(form.get("caption_language") ?? "");
+		}
+		if (form.has("output_language")) {
+			body.output_language = String(form.get("output_language") ?? "");
+		}
+		if (form.has("caption_style")) {
+			body.caption_style = String(form.get("caption_style") ?? "");
+		}
+		if (form.has("caption_position")) {
+			body.caption_position = String(form.get("caption_position") ?? "");
+		}
+		if (form.has("caption_mode")) {
+			body.caption_mode = String(form.get("caption_mode") ?? "");
+		}
+		if (form.has("style")) body.style = String(form.get("style") ?? "");
+		if (form.has("burn_captions")) {
+			body.burn_captions = form.get("burn_captions");
+		}
+		if (form.has("burnCaptions")) {
+			body.burnCaptions = form.get("burnCaptions");
+		}
+		const modelField = form.get("model");
+		if (modelField != null && String(modelField).trim() !== "") {
+			body.model = String(modelField).trim();
+		}
+		const llmModelField = form.get("llm_model");
+		if (llmModelField != null && String(llmModelField).trim() !== "") {
+			body.llm_model = String(llmModelField).trim();
+		}
+	} else if (contentType.includes("application/json")) {
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body" }, 400);
+		}
+		videoUrl = body.video_url || body.videoUrl;
+	} else {
+		return c.json(
+			{
+				error:
+					"Unsupported Content-Type. Use application/json or multipart/form-data.",
+			},
+			415,
+		);
+	}
+
+	if (!videoUrl || !String(videoUrl).trim()) {
+		return c.json(
+			{
+				error:
+					"Provide video_url (or videoUrl) or upload a video file (field: file or video)",
+			},
+			400,
+		);
+	}
+
+	const out = await createVideoCaptionJob({
+		videoUrl: String(videoUrl).trim(),
+		body,
+	});
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const createdId = rest?.data?.video_caption_id ?? null;
+	applyVideoCaptionApiHeaders(c, { videoCaptionId: createdId });
+	return c.json(rest, status);
+});
+
+/** GET /api/video-caption/:id — job status; captioned video + caption URLs when success */
+app.get("/api/video-caption/:id", async (c) => {
+	const id = c.req.param("id");
+	const out = await getVideoCaptionJobStatus(id);
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const d = rest?.data;
+	applyVideoCaptionApiHeaders(c, {
+		videoCaptionId: id,
+		captionUrl: d?.caption_url,
+		captionedVideoUrl: d?.captioned_video_url || d?.videoUrl,
+	});
+	return c.json(rest, status);
+});
+
+
+// ─── Viral clip cutter (OpenRouter + FFmpeg + UploadThing) ────────────────────
+//
+// POST /api/viral-clip-cut — { video_url, prompt?, clip_count?, max_clips?, ... }
+// GET  /api/viral-clip-cut/:id — job status; returns clips[] with video URLs when success
+
+function applyViralClipCutApiHeaders(c, opts = {}) {
+	const { viralClipCutId, clipCount } = opts;
+	c.header("X-Content-Type-Options", "nosniff");
+	c.header("Cache-Control", "no-store, private, max-age=0");
+	if (viralClipCutId) {
+		c.header("X-Viral-Clip-Cut-Id", String(viralClipCutId));
+	}
+	if (clipCount != null) {
+		c.header("X-Clip-Count", String(clipCount));
+	}
+}
+
+const VIRAL_CLIP_CUT_POST_RATE_LIMIT = 10;
+const VIRAL_CLIP_CUT_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * POST /api/viral-clip-cut
+ * JSON: { video_url | videoUrl, prompt?, clip_count?, max_clips?, min_clip_sec?, max_clip_sec?, target_aspect?, model? }
+ * multipart: file or video + optional fields above
+ */
+app.post("/api/viral-clip-cut", async (c) => {
+	const authHdr =
+		c.req.header("Authorization") || c.req.header("authorization");
+	const authToken = authHdr?.startsWith("Bearer ")
+		? authHdr.slice(7).trim()
+		: authHdr?.trim();
+	if (!authToken) {
+		return c.json(
+			{
+				error: "Authentication required",
+				code: "MISSING_AUTH_TOKEN",
+				details: "Provide a Bearer token in the Authorization header",
+			},
+			401,
+		);
+	}
+
+	const xff = c.req.header("x-forwarded-for");
+	const clientIp =
+		xff?.split(",")?.[0]?.trim() ||
+		c.req.header("x-real-ip") ||
+		c.req.header("cf-connecting-ip") ||
+		"unknown";
+	const rl = rateLimit(
+		clientIp,
+		VIRAL_CLIP_CUT_POST_RATE_LIMIT,
+		VIRAL_CLIP_CUT_POST_RATE_WINDOW_MS,
+	);
+	if (!rl.allowed) {
+		c.header("Retry-After", String(rl.retryAfter));
+		c.header("X-RateLimit-Limit", String(VIRAL_CLIP_CUT_POST_RATE_LIMIT));
+		c.header("X-RateLimit-Remaining", "0");
+		c.header("X-RateLimit-Window", "10 minutes");
+		return c.json(
+			{
+				success: false,
+				error: "Rate limit exceeded",
+				retryAfter: rl.retryAfter,
+			},
+			429,
+		);
+	}
+	c.header("X-RateLimit-Limit", String(VIRAL_CLIP_CUT_POST_RATE_LIMIT));
+	c.header("X-RateLimit-Remaining", String(rl.remaining));
+	c.header("X-RateLimit-Window", "10 minutes");
+
+	const contentType = c.req.header("content-type") || "";
+	let videoUrl;
+	let body = {};
+
+	const parseNumField = (form, ...keys) => {
+		for (const k of keys) {
+			if (!form.has(k)) continue;
+			const v = form.get(k);
+			if (v == null || String(v).trim() === "") continue;
+			const n = Number(v);
+			if (Number.isFinite(n)) return n;
+		}
+		return undefined;
+	};
+
+	if (contentType.includes("multipart/form-data")) {
+		let form;
+		try {
+			form = await c.req.formData();
+		} catch {
+			return c.json(
+				{
+					error:
+						"Invalid multipart/form-data payload. Use proper multipart encoding (-F in curl) or send JSON.",
+				},
+				400,
+			);
+		}
+		const fileField = form.get("file") || form.get("video");
+		if (
+			fileField &&
+			typeof fileField === "object" &&
+			"arrayBuffer" in fileField
+		) {
+			if (!process.env.UPLOADTHING_TOKEN) {
+				return c.json(
+					{
+						error:
+							"UPLOADTHING_TOKEN not configured (required to upload video files)",
+						code: "MISSING_UPLOAD_TOKEN",
+					},
+					503,
+				);
+			}
+			try {
+				const ab = await fileField.arrayBuffer();
+				const buf = Buffer.from(ab);
+				const origName =
+					typeof fileField.name === "string" ? fileField.name : "upload.mp4";
+				videoUrl = await uploadVideoBufferToUploadThing(buf, origName);
+			} catch (e) {
+				return c.json(
+					{ error: e?.message || "Video upload failed" },
+					502,
+				);
+			}
+		}
+		if (!videoUrl) {
+			videoUrl = form.get("video_url") || form.get("videoUrl");
+		}
+		if (form.has("prompt")) body.prompt = String(form.get("prompt") ?? "");
+		if (form.has("context")) body.context = String(form.get("context") ?? "");
+		if (form.has("language")) body.language = String(form.get("language") ?? "");
+		const clipCount = parseNumField(form, "clip_count", "clipCount");
+		if (clipCount != null) body.clip_count = clipCount;
+		const maxClips = parseNumField(form, "max_clips", "maxClips");
+		if (maxClips != null) body.max_clips = maxClips;
+		const minClipSec = parseNumField(form, "min_clip_sec", "minClipSec");
+		if (minClipSec != null) body.min_clip_sec = minClipSec;
+		const maxClipSec = parseNumField(form, "max_clip_sec", "maxClipSec");
+		if (maxClipSec != null) body.max_clip_sec = maxClipSec;
+		const secondsPerClip = parseNumField(
+			form,
+			"seconds_per_clip",
+			"secondsPerClip",
+		);
+		if (secondsPerClip != null) body.seconds_per_clip = secondsPerClip;
+		if (form.has("target_aspect")) {
+			body.target_aspect = String(form.get("target_aspect") ?? "");
+		}
+		if (form.has("targetAspect")) {
+			body.targetAspect = String(form.get("targetAspect") ?? "");
+		}
+		const modelField = form.get("model");
+		if (modelField != null && String(modelField).trim() !== "") {
+			body.model = String(modelField).trim();
+		}
+		const llmModelField = form.get("llm_model");
+		if (llmModelField != null && String(llmModelField).trim() !== "") {
+			body.llm_model = String(llmModelField).trim();
+		}
+	} else if (contentType.includes("application/json")) {
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body" }, 400);
+		}
+		videoUrl = body.video_url || body.videoUrl;
+	} else {
+		return c.json(
+			{
+				error:
+					"Unsupported Content-Type. Use application/json or multipart/form-data.",
+			},
+			415,
+		);
+	}
+
+	if (!videoUrl || !String(videoUrl).trim()) {
+		return c.json(
+			{
+				error:
+					"Provide video_url (or videoUrl) or upload a video file (field: file or video)",
+			},
+			400,
+		);
+	}
+
+	const out = await createViralClipCutJob({
+		videoUrl: String(videoUrl).trim(),
+		body,
+	});
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const createdId = rest?.data?.viral_clip_cut_id ?? null;
+	applyViralClipCutApiHeaders(c, { viralClipCutId: createdId });
+	return c.json(rest, status);
+});
+
+/** GET /api/viral-clip-cut/:id — job status; clips[] with video URLs when success */
+app.get("/api/viral-clip-cut/:id", async (c) => {
+	const id = c.req.param("id");
+	const out = await getViralClipCutJobStatus(id);
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const d = rest?.data;
+	applyViralClipCutApiHeaders(c, {
+		viralClipCutId: id,
+		clipCount: d?.clip_count,
+	});
+	return c.json(rest, status);
+});
+
+
+
 const port = Number(process.env.PORT) || 3000;
 
+
 /** Vercel invokes `index.js` as a Node serverless function; default export must be a handler. */
+
 export default handle(app);
 
 console.log(`Server is running on port ${port}`);

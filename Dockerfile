@@ -39,7 +39,8 @@ FROM base
 
 # ffmpeg + standalone yt-dlp (no Python; script build needs python3 on slim images)
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y chromium chromium-sandbox ffmpeg curl ca-certificates && \
+    apt-get install --no-install-recommends -y chromium chromium-sandbox ffmpeg curl ca-certificates \
+      fonts-noto-core fonts-noto-cjk fonts-noto-extra && \
     curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/bin/yt-dlp && \
     chmod a+rx /usr/bin/yt-dlp && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
