@@ -40,6 +40,7 @@ import {
 } from "./lib/translateApiLogger.js";
 import { createVideoCaptionJob, getVideoCaptionJobStatus } from "./lib/videoCaptionGenerator.js";
 import { createViralClipCutJob, getViralClipCutJobStatus } from "./lib/viralClipCutter.js";
+import { createBlogToVideoJob, getBlogToVideoJobStatus } from "./lib/blogToVideo.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
@@ -1593,6 +1594,117 @@ app.get("/api/viral-clip-cut/:id", async (c) => {
 	applyViralClipCutApiHeaders(c, {
 		viralClipCutId: id,
 		clipCount: d?.clip_count,
+	});
+	return c.json(rest, status);
+});
+
+
+// ─── Blog → video (scrape + 3 OpenRouter agents + TTS + FFmpeg) ───────────────
+//
+// POST /api/blog-to-video — { url, target_duration?, language?, model?, tts_voice?, aspect? }
+// GET  /api/blog-to-video/:id — job status; video_url + script + render_plan when success
+
+function applyBlogToVideoApiHeaders(c, opts = {}) {
+	const { blogToVideoId, videoUrl } = opts;
+	c.header("X-Content-Type-Options", "nosniff");
+	c.header("Cache-Control", "no-store, private, max-age=0");
+	if (blogToVideoId) {
+		c.header("X-Blog-To-Video-Id", String(blogToVideoId));
+	}
+	if (videoUrl) {
+		c.header("X-Video-Url", String(videoUrl));
+	}
+}
+
+const BLOG_TO_VIDEO_POST_RATE_LIMIT = 10;
+const BLOG_TO_VIDEO_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * POST /api/blog-to-video
+ * JSON: { url | blog_url, target_duration?, language?, model?, tts_voice?, aspect?, content? }
+ * Auth: non-empty Authorization (Bearer token). Rate limited per IP.
+ */
+app.post("/api/blog-to-video", async (c) => {
+	const authHdr =
+		c.req.header("Authorization") || c.req.header("authorization");
+	const authToken = authHdr?.startsWith("Bearer ")
+		? authHdr.slice(7).trim()
+		: authHdr?.trim();
+	if (!authToken) {
+		return c.json(
+			{
+				error: "Authentication required",
+				code: "MISSING_AUTH_TOKEN",
+				details: "Provide a Bearer token in the Authorization header",
+			},
+			401,
+		);
+	}
+
+	const xff = c.req.header("x-forwarded-for");
+	const clientIp =
+		xff?.split(",")?.[0]?.trim() ||
+		c.req.header("x-real-ip") ||
+		c.req.header("cf-connecting-ip") ||
+		"unknown";
+	const rl = rateLimit(
+		clientIp,
+		BLOG_TO_VIDEO_POST_RATE_LIMIT,
+		BLOG_TO_VIDEO_POST_RATE_WINDOW_MS,
+	);
+	if (!rl.allowed) {
+		c.header("Retry-After", String(rl.retryAfter));
+		c.header("X-RateLimit-Limit", String(BLOG_TO_VIDEO_POST_RATE_LIMIT));
+		c.header("X-RateLimit-Remaining", "0");
+		c.header("X-RateLimit-Window", "10 minutes");
+		return c.json(
+			{
+				success: false,
+				error: "Rate limit exceeded",
+				retryAfter: rl.retryAfter,
+			},
+			429,
+		);
+	}
+	c.header("X-RateLimit-Limit", String(BLOG_TO_VIDEO_POST_RATE_LIMIT));
+	c.header("X-RateLimit-Remaining", String(rl.remaining));
+	c.header("X-RateLimit-Window", "10 minutes");
+
+	const contentType = c.req.header("content-type") || "";
+	let body = {};
+	if (contentType.includes("application/json")) {
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body" }, 400);
+		}
+	} else {
+		return c.json(
+			{
+				error: "Unsupported Content-Type. Use application/json.",
+			},
+			415,
+		);
+	}
+
+	const out = await createBlogToVideoJob({ body });
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const createdId = rest?.data?.blog_to_video_id ?? null;
+	applyBlogToVideoApiHeaders(c, { blogToVideoId: createdId });
+	return c.json(rest, status);
+});
+
+/** GET /api/blog-to-video/:id — job status; video + script + render_plan when success */
+app.get("/api/blog-to-video/:id", async (c) => {
+	const id = c.req.param("id");
+	const out = await getBlogToVideoJobStatus(id);
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const d = rest?.data;
+	applyBlogToVideoApiHeaders(c, {
+		blogToVideoId: id,
+		videoUrl: d?.video_url || d?.videoUrl,
 	});
 	return c.json(rest, status);
 });
