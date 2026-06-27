@@ -1601,8 +1601,8 @@ app.get("/api/viral-clip-cut/:id", async (c) => {
 
 // ─── Blog → video (scrape + 3 OpenRouter agents + TTS + FFmpeg) ───────────────
 //
-// POST /api/blog-to-video — { url, target_duration?, language?, model?, tts_voice?, aspect? }
-// GET  /api/blog-to-video/:id — job status; video_url + script + render_plan when success
+// POST /api/blog-to-video — { url, target_duration?, language?, model?, tts_voice?, aspect?, style? }
+// GET  /api/blog-to-video/:id — job status; video_url + script + render_plan + style when success
 
 function applyBlogToVideoApiHeaders(c, opts = {}) {
 	const { blogToVideoId, videoUrl } = opts;
@@ -1621,7 +1621,7 @@ const BLOG_TO_VIDEO_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * POST /api/blog-to-video
- * JSON: { url | blog_url, target_duration?, language?, model?, tts_voice?, aspect?, content? }
+ * JSON: { url | blog_url, target_duration?, language?, model?, tts_voice?, aspect?, content?, style? }
  * Auth: non-empty Authorization (Bearer token). Rate limited per IP.
  */
 app.post("/api/blog-to-video", async (c) => {
