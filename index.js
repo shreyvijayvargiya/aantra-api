@@ -89,6 +89,7 @@ app.use(
 			"https://ihatereading.in",
 			"https://www.inkgest.com",
 			"https://aantraa.vercel.app",
+			"https://aantraa.com",
 			"https://aantraa.site",
 			"https://gettemplate.website/",
 			"https://swipe-emails.vercel.app",
