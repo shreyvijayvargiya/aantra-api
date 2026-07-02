@@ -43,9 +43,22 @@ import { createViralClipCutJob, getViralClipCutJobStatus } from "./lib/viralClip
 import { runFreeTextToAudio } from "./lib/freeTextToAudio.js";
 import { getFreeTtsModelsCatalog } from "./lib/freeTtsModels.js";
 import { getFreeKokoroVoicesResponse } from "./lib/freeKokoroVoices.js";
+import { getPiperConfigStatus } from "./lib/piperTts.js";
+import { getDefaultFreeTtsEngine } from "./lib/freeTtsModels.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+
+const piperStartup = getPiperConfigStatus();
+if (process.env.PIPER_MODEL?.trim() && !piperStartup.ready) {
+	console.warn(
+		`[free-tts] PIPER_MODEL is set but not usable: ${piperStartup.reason}. Default TTS engine: ${getDefaultFreeTtsEngine()}`,
+	);
+} else if (piperStartup.ready) {
+	console.log(`[free-tts] Piper ready: ${piperStartup.model}`);
+} else {
+	console.log(`[free-tts] Piper not configured; default TTS engine: openrouter (Kokoro)`);
+}
 
 const videoTranslateProxyPool = getVideoTranslateProxyManager();
 if (videoTranslateProxyPool.hasProxies()) {
