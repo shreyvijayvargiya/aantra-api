@@ -1373,7 +1373,11 @@ app.get("/api/video-translate/:id", async (c) => {
 });
 
 app.get("/", (c) => {
-	return c.json({ message: "Hello World" });
+	return c.json({
+		message: "Hello World",
+		api_version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "local",
+		free_tts: true,
+	});
 });
 
 // ─── AI video caption generator (OpenRouter + FFmpeg + UploadThing) ─────────────
@@ -1809,8 +1813,10 @@ const port = Number(process.env.PORT) || 3000;
 
 export default handle(app);
 
-console.log(`Server is running on port ${port}`);
-serve({
-	fetch: app.fetch,
-	port,
-});
+if (!process.env.VERCEL) {
+	console.log(`Server is running on port ${port}`);
+	serve({
+		fetch: app.fetch,
+		port,
+	});
+}
