@@ -40,6 +40,9 @@ import {
 } from "./lib/translateApiLogger.js";
 import { createVideoCaptionJob, getVideoCaptionJobStatus } from "./lib/videoCaptionGenerator.js";
 import { createViralClipCutJob, getViralClipCutJobStatus } from "./lib/viralClipCutter.js";
+import { runFreeTextToAudio } from "./lib/freeTextToAudio.js";
+import { getFreeTtsModelsCatalog } from "./lib/freeTtsModels.js";
+import { getFreeKokoroVoicesResponse } from "./lib/freeKokoroVoices.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
@@ -84,6 +87,8 @@ app.use(
 			"X-Video-Translate-Id",
 			"X-Caption-Url",
 			"X-Audio-Input-Url",
+			"X-Audio-Url",
+			"X-Free-Tts-Request-Id",
 			"X-Content-Type-Options",
 			"Cache-Control",
 		],
@@ -189,6 +194,191 @@ app.get("/api/video-translate/tts-voices", async (c) => {
 	const out = await getOpenRouterTtsVoicesWithPreviews();
 	c.header("Cache-Control", out.data?.previews_complete ? "public, max-age=3600" : "no-store");
 	return c.json(out);
+});
+
+// ─── Free text → speech (OpenRouter TTS + UploadThing) ─────────────────────────
+//
+// POST /api/audio-to-text — { text, language?, tts_voice?, voice_id?, tts_model?, tts_engine? }
+// GET  /api/audio-to-text/voices — Kokoro voice catalog (male/female) + free TTS model presets
+// GET  /api/audio-to-text/languages — same language list as video-translate
+
+const FREE_TTS_POST_RATE_LIMIT = 30;
+const FREE_TTS_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+function applyFreeTtsApiHeaders(c, opts = {}) {
+	const { requestId, audioUrl } = opts;
+	c.header("X-Content-Type-Options", "nosniff");
+	c.header("Cache-Control", "no-store, private, max-age=0");
+	if (requestId) c.header("X-Free-Tts-Request-Id", String(requestId));
+	if (audioUrl) c.header("X-Audio-Url", String(audioUrl).slice(0, 2048));
+}
+
+app.get("/api/audio-to-text/languages", async (c) => {
+	applyVideoTranslateApiHeaders(c, { cacheLanguages: true });
+	return c.json(getVideoTranslateLanguagesResponse());
+});
+
+app.get("/api/audio-to-text/voices", async (c) => {
+	const kokoro = getFreeKokoroVoicesResponse();
+	const models = getFreeTtsModelsCatalog();
+	c.header("Cache-Control", "public, max-age=3600");
+	return c.json({
+		error: null,
+		data: {
+			tier: "free",
+			tts_engine: models.default_engine,
+			model: models.default_preset === "piper" ? "piper" : models.default_chain[0],
+			default_voice_id: kokoro.default_voice_id,
+			default_tts_voice: kokoro.default_tts_voice,
+			preview_text:
+				"Hello! This is a sample of how I will narrate your content.",
+			voices: kokoro.voices,
+			voices_by_gender: kokoro.voices_by_gender,
+			tts_models: models.models,
+			default_tts_model: models.default_preset,
+			default_tts_engine: models.default_engine,
+			cost_note:
+				"Free tier uses Piper (local) when configured, else Kokoro on OpenRouter. Gemini TTS is not used on this endpoint.",
+		},
+	});
+});
+
+app.post("/api/audio-to-text", async (c) => {
+	const reqId = uuidv4();
+	const clientIp = clientIpFromContext(c);
+	const rl = rateLimit(
+		clientIp,
+		FREE_TTS_POST_RATE_LIMIT,
+		FREE_TTS_POST_RATE_WINDOW_MS,
+	);
+	if (!rl.allowed) {
+		c.header("Retry-After", String(rl.retryAfter));
+		c.header("X-RateLimit-Limit", String(FREE_TTS_POST_RATE_LIMIT));
+		c.header("X-RateLimit-Remaining", "0");
+		c.header("X-RateLimit-Window", "10 minutes");
+		return c.json(
+			{
+				success: false,
+				error: "Rate limit exceeded",
+				code: "RATE_LIMITED",
+				retryAfter: rl.retryAfter,
+			},
+			429,
+		);
+	}
+	c.header("X-RateLimit-Limit", String(FREE_TTS_POST_RATE_LIMIT));
+	c.header("X-RateLimit-Remaining", String(rl.remaining));
+	c.header("X-RateLimit-Window", "10 minutes");
+
+	const contentType = c.req.header("content-type") || "";
+	let text;
+	let ttsVoiceOpt;
+	let voiceIdOpt;
+	let brandVoiceIdOpt;
+	let ttsModelOpt;
+	let ttsEngineOpt;
+	let piperModelOpt;
+	let languageOpt;
+	let outputLanguageOpt;
+	let sourceLanguageOpt;
+	let sourceNllbOpt;
+	let transcriptLanguageOpt;
+	let translateModelOpt;
+
+	if (contentType.includes("application/json")) {
+		let body = {};
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body", code: "BAD_REQUEST" }, 400);
+		}
+		text = body.text ?? body.source_text;
+		languageOpt = body.language;
+		outputLanguageOpt = body.output_language;
+		sourceLanguageOpt = body.source_language;
+		sourceNllbOpt = body.source_nllb;
+		transcriptLanguageOpt = body.transcript_language;
+		translateModelOpt = body.translate_model;
+		ttsVoiceOpt = body.tts_voice;
+		voiceIdOpt = body.voice_id;
+		brandVoiceIdOpt = body.brand_voice_id;
+		ttsModelOpt = body.tts_model ?? body.model;
+		ttsEngineOpt = body.tts_engine;
+		piperModelOpt = body.piper_model;
+	} else if (contentType.includes("multipart/form-data")) {
+		let form;
+		try {
+			form = await c.req.formData();
+		} catch {
+			return c.json(
+				{ error: "Invalid multipart/form-data payload", code: "BAD_REQUEST" },
+				400,
+			);
+		}
+		const tf = form.get("text") ?? form.get("source_text");
+		if (tf != null) text = String(tf);
+		if (form.has("language")) languageOpt = String(form.get("language") ?? "");
+		if (form.has("output_language")) {
+			outputLanguageOpt = String(form.get("output_language") ?? "");
+		}
+		if (form.has("source_language")) {
+			sourceLanguageOpt = String(form.get("source_language") ?? "");
+		}
+		if (form.has("source_nllb")) {
+			sourceNllbOpt = String(form.get("source_nllb") ?? "");
+		}
+		if (form.has("transcript_language")) {
+			transcriptLanguageOpt = String(form.get("transcript_language") ?? "");
+		}
+		if (form.has("translate_model")) {
+			translateModelOpt = String(form.get("translate_model") ?? "");
+		}
+		if (form.has("tts_voice")) ttsVoiceOpt = String(form.get("tts_voice") ?? "");
+		if (form.has("voice_id")) voiceIdOpt = String(form.get("voice_id") ?? "");
+		if (form.has("brand_voice_id")) {
+			brandVoiceIdOpt = String(form.get("brand_voice_id") ?? "");
+		}
+		if (form.has("tts_model")) ttsModelOpt = String(form.get("tts_model") ?? "");
+		if (form.has("model")) ttsModelOpt = String(form.get("model") ?? "");
+		if (form.has("tts_engine")) ttsEngineOpt = String(form.get("tts_engine") ?? "");
+		if (form.has("piper_model")) {
+			piperModelOpt = String(form.get("piper_model") ?? "");
+		}
+	} else {
+		return c.json(
+			{
+				error:
+					"Unsupported Content-Type. Use application/json or multipart/form-data.",
+				code: "UNSUPPORTED_MEDIA_TYPE",
+			},
+			415,
+		);
+	}
+
+	const out = await runFreeTextToAudio({
+		text,
+		language: languageOpt,
+		output_language: outputLanguageOpt,
+		source_language: sourceLanguageOpt,
+		source_nllb: sourceNllbOpt,
+		transcript_language: transcriptLanguageOpt,
+		translate_model: translateModelOpt,
+		tts_voice: ttsVoiceOpt,
+		voice_id: voiceIdOpt,
+		brand_voice_id: brandVoiceIdOpt,
+		tts_model: ttsModelOpt,
+		tts_engine: ttsEngineOpt,
+		piper_model: piperModelOpt,
+		uploadAudioBufferToUploadThing,
+		requestId: reqId,
+	});
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	applyFreeTtsApiHeaders(c, {
+		requestId: reqId,
+		audioUrl: rest?.data?.audio_url,
+	});
+	return c.json(rest, status);
 });
 
 app.get("/api/video-translate/caption", async (c) => {
