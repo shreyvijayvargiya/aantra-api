@@ -41,6 +41,13 @@ import {
 import { createVideoCaptionJob, getVideoCaptionJobStatus } from "./lib/videoCaptionGenerator.js";
 import { createViralClipCutJob, getViralClipCutJobStatus } from "./lib/viralClipCutter.js";
 import { createBlogToVideoJob, getBlogToVideoJobStatus } from "./lib/blogToVideo.js";
+import {
+	createVideoEditorProject,
+	getVideoEditorProject,
+	getVideoEditorFrameAudio,
+	exportVideoEditorMp4,
+	VIDEO_EDITOR_MAX_DURATION_SEC,
+} from "./lib/videoEditor.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
@@ -87,6 +94,11 @@ app.use(
 			"X-Audio-Input-Url",
 			"X-Content-Type-Options",
 			"Cache-Control",
+			"X-Project-Id",
+			"X-Video-Editor-Duration-Ms",
+			"X-Video-Width",
+			"X-Video-Height",
+			"Content-Disposition",
 		],
 		credentials: true,
 		maxAge: 86_400,
@@ -1707,6 +1719,200 @@ app.get("/api/blog-to-video/:id", async (c) => {
 		videoUrl: d?.video_url || d?.videoUrl,
 	});
 	return c.json(rest, status);
+});
+
+
+// ─── Video editor (short-form: generate frames → edit → export MP4) ───────────
+//
+// POST /api/video-editor/generate — AI + TTS → project_id (poll GET for frames)
+// GET  /api/video-editor/:project_id — project + frames[] when ready
+// POST /api/video-editor/export — edited frames → MP4 binary (no UploadThing)
+
+const VIDEO_EDITOR_POST_RATE_LIMIT = 10;
+const VIDEO_EDITOR_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+function applyVideoEditorHeaders(c, opts = {}) {
+	const { projectId, durationMs, width, height } = opts;
+	c.header("X-Content-Type-Options", "nosniff");
+	c.header("Cache-Control", "no-store, private, max-age=0");
+	if (projectId) c.header("X-Project-Id", String(projectId));
+	if (durationMs != null) c.header("X-Video-Editor-Duration-Ms", String(durationMs));
+	if (width != null) c.header("X-Video-Width", String(width));
+	if (height != null) c.header("X-Video-Height", String(height));
+}
+
+function videoEditorAuthToken(c) {
+	const authHdr =
+		c.req.header("Authorization") || c.req.header("authorization");
+	return authHdr?.startsWith("Bearer ")
+		? authHdr.slice(7).trim()
+		: authHdr?.trim();
+}
+
+function videoEditorClientIp(c) {
+	const xff = c.req.header("x-forwarded-for");
+	return (
+		xff?.split(",")?.[0]?.trim() ||
+		c.req.header("x-real-ip") ||
+		c.req.header("cf-connecting-ip") ||
+		"unknown"
+	);
+}
+
+/** POST /api/video-editor/generate */
+app.post("/api/video-editor/generate", async (c) => {
+	if (!videoEditorAuthToken(c)) {
+		return c.json(
+			{
+				error: "Authentication required",
+				code: "MISSING_AUTH_TOKEN",
+				details: "Provide a Bearer token in the Authorization header",
+			},
+			401,
+		);
+	}
+
+	const rl = rateLimit(
+		videoEditorClientIp(c),
+		VIDEO_EDITOR_POST_RATE_LIMIT,
+		VIDEO_EDITOR_POST_RATE_WINDOW_MS,
+	);
+	if (!rl.allowed) {
+		c.header("Retry-After", String(rl.retryAfter));
+		return c.json(
+			{ success: false, error: "Rate limit exceeded", retryAfter: rl.retryAfter },
+			429,
+		);
+	}
+
+	const contentType = c.req.header("content-type") || "";
+	let body = {};
+	if (contentType.includes("application/json")) {
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body" }, 400);
+		}
+	} else {
+		return c.json({ error: "Unsupported Content-Type. Use application/json." }, 415);
+	}
+
+	const out = await createVideoEditorProject({ body });
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	const projectId = rest?.data?.project_id ?? null;
+	applyVideoEditorHeaders(c, { projectId });
+	return c.json(
+		{
+			...rest,
+			max_duration_sec: VIDEO_EDITOR_MAX_DURATION_SEC,
+		},
+		status,
+	);
+});
+
+/** GET /api/video-editor/:project_id — ?lite=1 for polling; ?include_audio=0 to omit base64 */
+app.get("/api/video-editor/:project_id", async (c) => {
+	const projectId = c.req.param("project_id");
+	const lite =
+		c.req.query("lite") === "1" ||
+		c.req.query("lite") === "true" ||
+		c.req.query("fields") === "status";
+	const includeAudio = !(
+		c.req.query("include_audio") === "0" ||
+		c.req.query("include_audio") === "false"
+	);
+	const out = await getVideoEditorProject(projectId, { lite, includeAudio });
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	applyVideoEditorHeaders(c, {
+		projectId,
+		durationMs: rest?.data?.duration_ms,
+		width: rest?.data?.width,
+		height: rest?.data?.height,
+	});
+	return c.json(rest, status);
+});
+
+/** GET /api/video-editor/:project_id/frames/:frame_id/audio — single frame WAV base64 */
+app.get("/api/video-editor/:project_id/frames/:frame_id/audio", async (c) => {
+	const projectId = c.req.param("project_id");
+	const frameId = c.req.param("frame_id");
+	const out = await getVideoEditorFrameAudio(projectId, frameId);
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	applyVideoEditorHeaders(c, { projectId });
+	return c.json(rest, status);
+});
+
+/** POST /api/video-editor/export — { project_id, frames?, global_style? } → video/mp4 */
+app.post("/api/video-editor/export", async (c) => {
+	if (!videoEditorAuthToken(c)) {
+		return c.json(
+			{
+				error: "Authentication required",
+				code: "MISSING_AUTH_TOKEN",
+			},
+			401,
+		);
+	}
+
+	const contentType = c.req.header("content-type") || "";
+	let body = {};
+	if (contentType.includes("application/json")) {
+		try {
+			body = await c.req.json();
+		} catch {
+			return c.json({ error: "Invalid JSON body", code: "BAD_REQUEST" }, 400);
+		}
+	} else {
+		return c.json({ error: "Unsupported Content-Type. Use application/json." }, 415);
+	}
+
+	try {
+		const out = await exportVideoEditorMp4({ body });
+		if (out.error || !out.buffer) {
+			return c.json(
+				{
+					error: out.error,
+					code: out.code ?? "EXPORT_FAILED",
+					user_message: out.user_message ?? out.error,
+				},
+				out.httpStatus ?? 500,
+			);
+		}
+
+		const filename = String(body.filename ?? "video-editor-export.mp4").replace(
+			/[^\w.-]/g,
+			"_",
+		);
+		applyVideoEditorHeaders(c, {
+			durationMs: out.durationMs,
+			width: out.width,
+			height: out.height,
+			projectId: body.project_id ?? body.projectId,
+		});
+		if (out.exportMs != null) {
+			c.header("X-Export-Duration-Ms", String(out.exportMs));
+		}
+		c.header("Content-Type", "video/mp4");
+		c.header("Content-Disposition", `attachment; filename="${filename}"`);
+		c.header("Content-Length", String(out.buffer.length));
+		return c.body(out.buffer, 200);
+	} catch (err) {
+		console.error("[videoEditor] export route error:", err?.message || err);
+		return c.json(
+			{
+				error: "Video export failed",
+				code: "EXPORT_FAILED",
+				user_message: "Video export failed. Please try again.",
+				...(process.env.NODE_ENV !== "production"
+					? { error_detail: String(err?.message || err) }
+					: {}),
+			},
+			500,
+		);
+	}
 });
 
 
