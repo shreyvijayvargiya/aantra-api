@@ -88,10 +88,10 @@ app.use(
 			"http://localhost:3003",
 			"https://ihatereading.in",
 			"https://www.inkgest.com",
-			"https://aantraa.vercel.app",
 			"https://aantraa.com",
-			"https://aantraa.site",
-			"https://gettemplate.website/",
+			"https://www.aantraa.com",
+			"https://www.aantraa.site",
+			"https://gettemplate.app/",
 			"https://swipe-emails.vercel.app",
 		], // Allow specific origins
 		allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
