@@ -16,6 +16,7 @@ import {
 	getVideoTranslateJobStatus,
 	getOpenRouterTtsVoicesWithPreviews,
 	logYtDlpCookiesAtStartup,
+	logRapidApiYoutubeAtStartup,
 } from "./lib/videoTranslateOpenRouter.js";
 import {
 	runVoiceTranslateText,
@@ -73,6 +74,7 @@ if (videoTranslateProxyPool.hasProxies()) {
 	}
 }
 void logYtDlpCookiesAtStartup();
+void logRapidApiYoutubeAtStartup();
 
 const app = new Hono();
 
