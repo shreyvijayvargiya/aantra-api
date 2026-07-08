@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import "dotenv/config";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { handle } from "@hono/node-server/vercel";
