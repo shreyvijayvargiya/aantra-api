@@ -46,6 +46,8 @@ import { getFreeTtsModelsCatalog } from "./lib/freeTtsModels.js";
 import { getFreeKokoroVoicesResponse } from "./lib/freeKokoroVoices.js";
 import { getPiperConfigStatus } from "./lib/piperTts.js";
 import { getDefaultFreeTtsEngine } from "./lib/freeTtsModels.js";
+import { readApiDocsMarkdown, renderApiDocsHtml } from "./lib/apiDocsPage.js";
+import { estimateVideoTranslateCost } from "./lib/videoTranslateEstimate.js";
 
 dotenv.config();
 const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
@@ -210,6 +212,65 @@ app.get("/api/video-translate/tts-voices", async (c) => {
 	const out = await getOpenRouterTtsVoicesWithPreviews();
 	c.header("Cache-Control", out.data?.previews_complete ? "public, max-age=3600" : "no-store");
 	return c.json(out);
+});
+
+const VIDEO_TRANSLATE_ESTIMATE_RATE_LIMIT = 30;
+const VIDEO_TRANSLATE_ESTIMATE_RATE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * POST /api/video-translate/estimate
+ * JSON: { video_url, output_language, duration_sec?, translation_engine?, tts_engine?, glossary_refinement? }
+ * Returns LLM-based token/cost/time estimates. YouTube URLs over 20 minutes are rejected.
+ */
+app.post("/api/video-translate/estimate", async (c) => {
+	const xff = c.req.header("x-forwarded-for");
+	const ip =
+		xff?.split(",")?.[0]?.trim() ||
+		c.req.header("x-real-ip") ||
+		c.req.header("cf-connecting-ip") ||
+		"unknown";
+	const rl = rateLimit(
+		ip,
+		VIDEO_TRANSLATE_ESTIMATE_RATE_LIMIT,
+		VIDEO_TRANSLATE_ESTIMATE_RATE_WINDOW_MS,
+	);
+	if (!rl.allowed) {
+		c.header("Retry-After", String(rl.retryAfter));
+		return c.json(
+			{
+				error: "Rate limit exceeded",
+				code: "RATE_LIMITED",
+				retryAfter: rl.retryAfter,
+			},
+			429,
+		);
+	}
+
+	let body = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "Invalid JSON body", code: "BAD_REQUEST" },
+			400,
+		);
+	}
+
+	const videoUrl = pickVideoUrlFromJsonBody(body);
+	const out = await estimateVideoTranslateCost({ videoUrl, body });
+	const status = out.httpStatus ?? (out.error ? 400 : 200);
+	if (out.error) {
+		return c.json(
+			{
+				error: out.error,
+				code: out.code,
+				...(out.details ? { details: out.details } : {}),
+				...(out.data ? { data: out.data } : {}),
+			},
+			status,
+		);
+	}
+	return c.json({ error: null, data: out.data }, status);
 });
 
 // ─── Free text → speech (OpenRouter TTS + UploadThing) ─────────────────────────
@@ -1380,7 +1441,43 @@ app.get("/", (c) => {
 		message: "Hello World",
 		api_version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "local",
 		free_tts: true,
+		docs_url: "/docs",
 	});
+});
+
+async function serveApiDocsHtml(c) {
+	try {
+		const html = await renderApiDocsHtml();
+		c.header("Cache-Control", "public, max-age=60");
+		return c.html(html);
+	} catch (e) {
+		console.error("[docs] failed to render docs.md:", e);
+		return c.json(
+			{ error: "API documentation unavailable", code: "DOCS_UNAVAILABLE" },
+			503,
+		);
+	}
+}
+
+/** Human-readable API reference (renders repo docs.md). */
+app.get("/docs", serveApiDocsHtml);
+app.get("/api/docs", serveApiDocsHtml);
+
+/** Raw markdown source for docs.md. */
+app.get("/api/docs.md", async (c) => {
+	try {
+		const md = await readApiDocsMarkdown();
+		c.header("Cache-Control", "public, max-age=60");
+		return c.text(md, 200, {
+			"Content-Type": "text/markdown; charset=utf-8",
+		});
+	} catch (e) {
+		console.error("[api/docs.md] failed to read docs.md:", e);
+		return c.json(
+			{ error: "API documentation unavailable", code: "DOCS_UNAVAILABLE" },
+			503,
+		);
+	}
 });
 
 // ─── AI video caption generator (OpenRouter + FFmpeg + UploadThing) ─────────────

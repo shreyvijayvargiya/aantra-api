@@ -1,58 +1,69 @@
-# API Documentation (Aantraa API)
+# API Documentation
 
-Base server: this repo runs a Hono server (`index.js`) on port `3000` by default.
+Base server: Hono (`index.js`) on port `3000` by default. All endpoints return JSON unless noted (SSE stream).
 
-All endpoints return JSON unless noted (SSE stream).
+## Endpoint overview
+
+| Endpoint | Method | Auth | Description |
+| --- | --- | --- | --- |
+| `/` | GET | No | Health check |
+| `/docs` | GET | No | HTML API reference (this page) |
+| `/api/docs.md` | GET | No | Raw markdown source |
+| `/api/audio-to-text` | POST | No | Free text → translate → TTS |
+| `/api/audio-to-text/languages` | GET | No | Supported languages |
+| `/api/audio-to-text/voices` | GET | No | Free-tier TTS voice catalog |
+| `/api/voice-translate/text` | POST | Yes | Multi-language text/audio translate + TTS |
+| `/api/video-translate/text` | POST | Yes | Alias of voice-translate/text |
+| `/api/video-translate` | POST | Yes | Async video dubbing jobs |
+| `/api/video-translate/estimate` | POST | No | Cost/time estimate before dubbing |
+| `/api/video-translate/:id` | GET | No | Video translate job status |
+| `/api/video-translate/languages` | GET | No | Supported target languages |
+| `/api/video-translate/tts-voices` | GET | No | OpenRouter TTS voice catalog |
+| `/api/translate/tts-voices` | GET | No | Same as video-translate/tts-voices |
+| `/api/video-translate/caption` | GET | No | Fetch or SSE-stream captions |
+| `/api/video-caption` | POST | Yes | Async caption generation |
+| `/api/video-caption/:id` | GET | No | Caption job status |
+| `/api/viral-clip-cut` | POST | Yes | Async viral clip detection |
+| `/api/viral-clip-cut/:id` | GET | No | Viral clip job status |
 
 ## Authentication
 
-- **Required** (non-empty `Authorization` header) for:
-  - `POST /api/video-translate`
-  - `POST /api/voice-translate/text`
-  - `POST /api/video-translate/text` (alias)
-  - `POST /api/video-caption`
-  - `POST /api/viral-clip-cut`
-- **Not required** for:
-  - `GET /`
-  - `GET /api/video-translate/languages`
-  - `GET /api/video-translate/tts-voices`
-  - `GET /api/translate/tts-voices`
-  - `GET /api/audio-to-text/languages`
-  - `GET /api/audio-to-text/voices`
-  - `POST /api/audio-to-text`
-  - `GET /api/video-translate/caption`
-  - `GET /api/video-translate/:id`
-  - `GET /api/video-caption/:id`
-  - `GET /api/viral-clip-cut/:id`
+| Endpoint | Auth required |
+| --- | --- |
+| `POST /api/video-translate` | Yes |
+| `POST /api/voice-translate/text` | Yes |
+| `POST /api/video-translate/text` | Yes |
+| `POST /api/video-caption` | Yes |
+| `POST /api/viral-clip-cut` | Yes |
+| All other endpoints | No |
 
 **Authorization header format**
 
-- **Preferred**: `Authorization: Bearer <token>`
-- Also accepted by these endpoints: `Authorization: <token>` (raw string)
+| Format | Example |
+| --- | --- |
+| Preferred | `Authorization: Bearer <token>` |
+| Also accepted | `Authorization: <token>` (raw string) |
 
 ## Content types
 
-Many POST endpoints support either:
-
-- **JSON**: `Content-Type: application/json`
-- **Multipart upload**: `Content-Type: multipart/form-data`
-  - Use this to upload files (`file`, `video`, or `audio` depending on the endpoint).
+| Content-Type | Use case |
+| --- | --- |
+| `application/json` | JSON request bodies |
+| `multipart/form-data` | File uploads (`file`, `video`, or `audio` depending on endpoint) |
 
 ## Rate limits (per IP)
 
-These are enforced in `index.js`:
+| Endpoint | Limit |
+| --- | --- |
+| `POST /api/audio-to-text` | 30 / 10 min |
+| `POST /api/voice-translate/text` | 20 / 10 min |
+| `POST /api/video-translate/text` | 20 / 10 min |
+| `POST /api/video-translate` | 10 / 10 min |
+| `POST /api/video-translate/estimate` | 30 / 10 min |
+| `POST /api/video-caption` | 10 / 10 min |
+| `POST /api/viral-clip-cut` | 10 / 10 min |
 
-- `POST /api/audio-to-text`: **30 / 10 min**
-- `POST /api/voice-translate/text` and `POST /api/video-translate/text`: **20 / 10 min**
-- `POST /api/video-translate`: **10 / 10 min**
-- `POST /api/video-caption`: **10 / 10 min**
-- `POST /api/viral-clip-cut`: **10 / 10 min**
-
-When rate-limited:
-
-- HTTP `429`
-- Response includes `retryAfter` (seconds)
-- Headers include `Retry-After`, `X-RateLimit-*`
+When rate-limited: HTTP `429`, body includes `retryAfter` (seconds), headers include `Retry-After` and `X-RateLimit-*`.
 
 ---
 
@@ -65,6 +76,28 @@ Health check.
 - `message`: string
 - `api_version`: string (`VERCEL_GIT_COMMIT_SHA` short SHA, or `"local"`)
 - `free_tts`: boolean
+- `docs_url`: string (`/docs`)
+
+---
+
+## GET /docs
+## GET /api/docs
+
+HTML documentation page (renders `docs.md` from this repo). `/docs` and `/api/docs` are equivalent.
+
+**Query params**: none
+
+**Response**: `text/html`
+
+---
+
+## GET /api/docs.md
+
+Raw markdown source for API documentation.
+
+**Query params**: none
+
+**Response**: `text/markdown`
 
 ---
 
@@ -293,6 +326,50 @@ Translate either **text** or **audio** into multiple target languages, optionall
     - `glossary_refinement`: boolean
     - `bulk_mt_model`: string|null
 - Usage fields are also included at top-level (see `lib/openRouterUsage.js`)
+
+---
+
+## POST /api/video-translate/estimate
+
+Returns an AI-generated estimate of token usage, USD cost range, and processing time **before** starting a dubbing job. Supports all languages from `GET /api/video-translate/languages`.
+
+YouTube URLs longer than **20 minutes** are rejected (`VIDEO_TOO_LONG`). Other video URLs have no duration cap for estimation.
+
+### Authorization
+
+**Not required.**
+
+### Request (JSON)
+
+**Required**
+
+- Video URL: one of `video_url`, `videoUrl`, `url`, `video`, `source_url`, `sourceUrl`, `link`
+- `output_language` (string) — must match a supported language label
+
+**Optional**
+
+- `duration_sec` (number) — use when duration cannot be probed from the URL
+- `translation_engine` (string): `llm` (default) or `nllb`
+- `tts_engine` (string): `openrouter` (default) or `piper`
+- `glossary_refinement` (boolean-ish)
+
+### Response (success)
+
+- `error: null`
+- `data`:
+  - `video_url`, `output_language`
+  - `duration_sec`, `duration_min`, `duration_source`
+  - `pipeline`: `{ translation, tts, glossary_refinement }`
+  - `estimated_tokens`: `{ prompt_tokens, completion_tokens, total_tokens }`
+  - `estimated_cost_usd`: `{ low, high }`
+  - `estimated_time_minutes`: `{ low, high }`
+  - `summary` (string)
+
+### Response (YouTube too long)
+
+- HTTP `400`, `code`: `VIDEO_TOO_LONG`
+- `error`: message
+- `data`: includes `duration_sec`, `max_duration_min` (20)
 
 ---
 
