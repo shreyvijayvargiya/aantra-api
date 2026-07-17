@@ -15,6 +15,7 @@ Base server: Hono (`index.js`) on port `3000` by default. All endpoints return J
 | `/api/voice-translate/text` | POST | Yes | Multi-language text/audio translate + TTS |
 | `/api/video-translate/text` | POST | Yes | Alias of voice-translate/text |
 | `/api/video-translate` | POST | Yes | Async video dubbing jobs |
+| `/api/video-translate/long` | POST | Yes | Long-form dubbing (SRT/batch text MT → timed TTS); same body/response |
 | `/api/video-translate/estimate` | POST | No | Cost/time estimate before dubbing |
 | `/api/video-translate/:id` | GET | No | Video translate job status |
 | `/api/video-translate/languages` | GET | No | Supported target languages |
@@ -31,6 +32,7 @@ Base server: Hono (`index.js`) on port `3000` by default. All endpoints return J
 | Endpoint | Auth required |
 | --- | --- |
 | `POST /api/video-translate` | Yes |
+| `POST /api/video-translate/long` | Yes |
 | `POST /api/voice-translate/text` | Yes |
 | `POST /api/video-translate/text` | Yes |
 | `POST /api/video-caption` | Yes |
@@ -59,6 +61,7 @@ Base server: Hono (`index.js`) on port `3000` by default. All endpoints return J
 | `POST /api/voice-translate/text` | 20 / 10 min |
 | `POST /api/video-translate/text` | 20 / 10 min |
 | `POST /api/video-translate` | 10 / 10 min |
+| `POST /api/video-translate/long` | 10 / 10 min |
 | `POST /api/video-translate/estimate` | 30 / 10 min |
 | `POST /api/video-caption` | 10 / 10 min |
 | `POST /api/viral-clip-cut` | 10 / 10 min |
@@ -456,6 +459,36 @@ All optional JSON fields above can be sent as form text fields.
     - `tts`: `"openrouter"` or `"piper"`
     - `glossary_refinement`: boolean
     - optional: `tts_voice`, `tts_voice_id`
+
+---
+
+## POST /api/video-translate/long
+
+Same request, response, auth, and rate limits as `POST /api/video-translate`. Use this endpoint for **Pro / long videos** (typically >10 minutes).
+
+**Pipeline (internal):**
+
+1. Download via **yt-dlp** for YouTube (RapidAPI skipped; source stays local)
+2. Build **timed transcript / SRT cues**: YouTube captions or embedded subs when available, else **one-pass ffmpeg audio ASR** (chunked only for ASR size limits)
+3. Merge cues → **batch text translation** (LLM JSON batches, or NLLB if requested) — no repeated video Gemini calls
+4. **Parallel TTS** into a full-duration PCM track (cues placed by `start_ms`)
+5. ffmpeg mux muted video + dubbed track → upload final MP4
+
+This is much faster/cheaper than splitting the video into N dubbed chunks.
+
+**Defaults:** `translation_engine` defaults to **`llm`**. Pass `nllb` explicitly for local MT when configured.
+
+Poll status with the same `GET /api/video-translate/:id`. Successful jobs report `engine: "openrouter-gemini-dub-long"`.
+
+**Progress / errors on GET:** long jobs include `steps` and `chunks` arrays (`[{ id|index, stage, status, error, detail }]`). Stages include `download`, `captions`, `asr`, `translate_batch`, `tts`, `mux`, `upload`. Failures are logged as `[videoTranslate-long] job … [stage#n] failed error=…`.
+
+**Env (optional):**
+
+- `LONG_VIDEO_TRANSLATE_TIMEOUT_MS` — job timeout (default 90 min)
+- `LONG_VIDEO_TRANSLATE_BATCH_SIZE` — cues per text-translate request (default 12)
+- `LONG_VIDEO_TTS_CONCURRENCY` — parallel TTS calls (default 3)
+- `LONG_VIDEO_TTS_MERGE_CHARS` — merge caption cues up to N chars before TTS (default 480)
+- `LONG_VIDEO_TRANSLATE_ASR_CHUNK_SEC` — ASR audio slice when captions missing (default 120)
 
 ---
 

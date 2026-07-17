@@ -14,6 +14,7 @@ import {
 	subscribeVideoTranslateCaptionUpdates,
 	VIDEO_TRANSLATE_CAPTION_SSE_MAX_MS,
 	createVideoTranslateJobs,
+	createVideoTranslateLongJobs,
 	getVideoTranslateJobStatus,
 	getOpenRouterTtsVoicesWithPreviews,
 	logYtDlpCookiesAtStartup,
@@ -1066,19 +1067,22 @@ function pickAudioSourceUrlFromVoiceFormFields(form) {
 }
 
 /**
- * POST /api/video-translate
+ * POST /api/video-translate | POST /api/video-translate/long
  * JSON: { video_url | videoUrl | url | video | source_url | link, output_language | output_languages, ... }
  * multipart: file or video (upload), or string URL fields above, optional output_language, etc.
+ * `/long` uses captions/SRT (or one-pass ASR) → batch text translate → timed TTS → mux.
  * LLM preset (optional; default Gemini): gemini | gpt-4o-mini | sonnet | kimi | grok — see lib/translateLlmModels.js
  * Cost controls: translation_engine: llm (default) | nllb; tts_engine: openrouter (default) | piper; glossary_refinement: bool;
  *   source_nllb (FLORES) or transcript_language / source_language (ISO) for NLLB source; piper_model; glossary_refine_model (OpenRouter id for glossary pass).
  * Auth: non-empty Authorization (Bearer &lt;token&gt; or raw token string). Rate limited per IP.
  */
-app.post("/api/video-translate", async (c) => {
+async function handleVideoTranslatePost(c) {
+	const isLongForm = c.req.path === "/api/video-translate/long";
+	const routeLabel = isLongForm ? "video-translate-long" : "video-translate";
 	const vtVideoReqId = uuidv4();
 	const vtVideoIp = clientIpFromContext(c);
 	setTranslateApiLogContext(c, {
-		routeLabel: "video-translate",
+		routeLabel,
 		provider: "openrouter",
 		apiKind: "video_translate",
 		requestId: vtVideoReqId,
@@ -1093,7 +1097,7 @@ app.post("/api/video-translate", async (c) => {
 	if (!vtAuthToken) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				error: "Authentication required",
 				code: "MISSING_AUTH_TOKEN",
@@ -1121,7 +1125,7 @@ app.post("/api/video-translate", async (c) => {
 		c.header("X-RateLimit-Window", "10 minutes");
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				success: false,
 				error: "Rate limit exceeded",
@@ -1149,7 +1153,7 @@ app.post("/api/video-translate", async (c) => {
 		} catch {
 			return jsonTranslateApi(
 				c,
-				"video-translate",
+				routeLabel,
 				{
 					error:
 						"Invalid multipart/form-data payload. Use proper multipart encoding (-F in curl) or send JSON.",
@@ -1166,7 +1170,7 @@ app.post("/api/video-translate", async (c) => {
 			if (!process.env.UPLOADTHING_TOKEN) {
 				return jsonTranslateApi(
 					c,
-					"video-translate",
+					routeLabel,
 					{
 						error:
 							"UPLOADTHING_TOKEN not configured (required to upload video files)",
@@ -1184,7 +1188,7 @@ app.post("/api/video-translate", async (c) => {
 			} catch (e) {
 				return jsonTranslateApi(
 					c,
-					"video-translate",
+					routeLabel,
 					{ error: e?.message || "Video upload failed" },
 					502,
 				);
@@ -1203,7 +1207,7 @@ app.post("/api/video-translate", async (c) => {
 			} catch {
 				return jsonTranslateApi(
 					c,
-					"video-translate",
+					routeLabel,
 					{
 						error:
 							"output_languages must be a JSON array string (e.g. [\"Spanish\",\"French\"])",
@@ -1286,7 +1290,7 @@ app.post("/api/video-translate", async (c) => {
 		} catch {
 			return jsonTranslateApi(
 				c,
-				"video-translate",
+				routeLabel,
 				{ error: "Invalid JSON body" },
 				400,
 			);
@@ -1295,7 +1299,7 @@ app.post("/api/video-translate", async (c) => {
 	} else {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				error: "Unsupported Content-Type. Use application/json or multipart/form-data.",
 			},
@@ -1306,7 +1310,7 @@ app.post("/api/video-translate", async (c) => {
 	if (!videoUrl || !String(videoUrl).trim()) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				error:
 					"Provide video_url, videoUrl, url, or video (string URL), or upload a file (field: file or video)",
@@ -1318,7 +1322,7 @@ app.post("/api/video-translate", async (c) => {
 	if (!body.output_language && !body.output_languages) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{ error: "Provide output_language or output_languages" },
 			400,
 		);
@@ -1326,7 +1330,7 @@ app.post("/api/video-translate", async (c) => {
 	if (body.output_language && body.output_languages) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{ error: "Use only one of output_language or output_languages" },
 			400,
 		);
@@ -1383,7 +1387,10 @@ app.post("/api/video-translate", async (c) => {
 		voice_id: body.voice_id ?? null,
 	});
 
-	const out = await createVideoTranslateJobs({
+	const createJobs = isLongForm
+		? createVideoTranslateLongJobs
+		: createVideoTranslateJobs;
+	const out = await createJobs({
 		videoUrl: payload.video_url,
 		body: {
 			output_language: payload.output_language,
@@ -1420,8 +1427,16 @@ app.post("/api/video-translate", async (c) => {
 		videoTranslateId: createdId,
 		captionUrl: rest?.data?.caption_url,
 	});
-	return jsonTranslateApi(c, "video-translate", rest, status);
-});
+	return jsonTranslateApi(c, routeLabel, rest, status);
+}
+
+/**
+ * POST /api/video-translate/long
+ * Same request/response as POST /api/video-translate; SRT/batch text MT → timed TTS → mux.
+ */
+app.post("/api/video-translate/long", handleVideoTranslatePost);
+
+app.post("/api/video-translate", handleVideoTranslatePost);
 
 /** GET /api/video-translate/:id — job status (Firestore); transcript, caption string, caption_url when success */
 app.get("/api/video-translate/:id", async (c) => {
