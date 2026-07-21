@@ -13,7 +13,9 @@ import {
 	subscribeVideoTranslateCaptionUpdates,
 	VIDEO_TRANSLATE_CAPTION_SSE_MAX_MS,
 	createVideoTranslateJobs,
+	createVideoTranslateLongJobs,
 	getVideoTranslateJobStatus,
+	retryVideoTranslateJob,
 	getOpenRouterTtsVoicesWithPreviews,
 	logYtDlpCookiesAtStartup,
 } from "./lib/videoTranslateOpenRouter.js";
@@ -817,15 +819,17 @@ function pickAudioSourceUrlFromVoiceFormFields(form) {
  * LLM preset (optional; default Gemini): gemini | gpt-4o-mini | sonnet | kimi | grok — see lib/translateLlmModels.js
  * Cost controls: translation_engine: llm (default) | nllb; tts_engine: openrouter (default) | piper; glossary_refinement: bool;
  *   source_nllb (FLORES) or transcript_language / source_language (ISO) for NLLB source; piper_model; glossary_refine_model (OpenRouter id for glossary pass).
+ * For long videos use POST /api/video-translate/long (ffmpeg chunk → parallel translate → concat).
  * Auth: non-empty Authorization (Bearer &lt;token&gt; or raw token string). Rate limited per IP.
  */
-app.post("/api/video-translate", async (c) => {
+async function handleVideoTranslateCreateRequest(c, { longPipeline = false } = {}) {
+	const routeLabel = longPipeline ? "video-translate/long" : "video-translate";
 	const vtVideoReqId = uuidv4();
 	const vtVideoIp = clientIpFromContext(c);
 	setTranslateApiLogContext(c, {
-		routeLabel: "video-translate",
+		routeLabel,
 		provider: "openrouter",
-		apiKind: "video_translate",
+		apiKind: longPipeline ? "video_translate_long" : "video_translate",
 		requestId: vtVideoReqId,
 		clientIp: vtVideoIp,
 	});
@@ -838,7 +842,7 @@ app.post("/api/video-translate", async (c) => {
 	if (!vtAuthToken) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				error: "Authentication required",
 				code: "MISSING_AUTH_TOKEN",
@@ -866,7 +870,7 @@ app.post("/api/video-translate", async (c) => {
 		c.header("X-RateLimit-Window", "10 minutes");
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				success: false,
 				error: "Rate limit exceeded",
@@ -885,7 +889,10 @@ app.post("/api/video-translate", async (c) => {
 	let body = {};
 
 	const parseBool = (v) => v === true || v === "true" || v === "1";
-	appendTranslateApiLogParams(c, { content_type: contentType || null });
+	appendTranslateApiLogParams(c, {
+		content_type: contentType || null,
+		long_pipeline: longPipeline,
+	});
 
 	if (contentType.includes("multipart/form-data")) {
 		let form;
@@ -894,7 +901,7 @@ app.post("/api/video-translate", async (c) => {
 		} catch {
 			return jsonTranslateApi(
 				c,
-				"video-translate",
+				routeLabel,
 				{
 					error:
 						"Invalid multipart/form-data payload. Use proper multipart encoding (-F in curl) or send JSON.",
@@ -911,7 +918,7 @@ app.post("/api/video-translate", async (c) => {
 			if (!process.env.UPLOADTHING_TOKEN) {
 				return jsonTranslateApi(
 					c,
-					"video-translate",
+					routeLabel,
 					{
 						error:
 							"UPLOADTHING_TOKEN not configured (required to upload video files)",
@@ -929,7 +936,7 @@ app.post("/api/video-translate", async (c) => {
 			} catch (e) {
 				return jsonTranslateApi(
 					c,
-					"video-translate",
+					routeLabel,
 					{ error: e?.message || "Video upload failed" },
 					502,
 				);
@@ -948,7 +955,7 @@ app.post("/api/video-translate", async (c) => {
 			} catch {
 				return jsonTranslateApi(
 					c,
-					"video-translate",
+					routeLabel,
 					{
 						error:
 							"output_languages must be a JSON array string (e.g. [\"Spanish\",\"French\"])",
@@ -1025,13 +1032,27 @@ app.post("/api/video-translate", async (c) => {
 		if (form.has("glossary_refine_model")) {
 			body.glossary_refine_model = String(form.get("glossary_refine_model") ?? "");
 		}
+		if (longPipeline) {
+			if (form.has("chunk_sec")) {
+				const n = Number(form.get("chunk_sec"));
+				if (!Number.isNaN(n)) body.chunk_sec = n;
+			}
+			if (form.has("chunk_duration_sec")) {
+				const n = Number(form.get("chunk_duration_sec"));
+				if (!Number.isNaN(n)) body.chunk_duration_sec = n;
+			}
+			if (form.has("chunk_threshold_sec")) {
+				const n = Number(form.get("chunk_threshold_sec"));
+				if (!Number.isNaN(n)) body.chunk_threshold_sec = n;
+			}
+		}
 	} else if (contentType.includes("application/json")) {
 		try {
 			body = await c.req.json();
 		} catch {
 			return jsonTranslateApi(
 				c,
-				"video-translate",
+				routeLabel,
 				{ error: "Invalid JSON body" },
 				400,
 			);
@@ -1040,7 +1061,7 @@ app.post("/api/video-translate", async (c) => {
 	} else {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				error: "Unsupported Content-Type. Use application/json or multipart/form-data.",
 			},
@@ -1051,7 +1072,7 @@ app.post("/api/video-translate", async (c) => {
 	if (!videoUrl || !String(videoUrl).trim()) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{
 				error:
 					"Provide video_url, videoUrl, url, or video (string URL), or upload a file (field: file or video)",
@@ -1063,7 +1084,7 @@ app.post("/api/video-translate", async (c) => {
 	if (!body.output_language && !body.output_languages) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{ error: "Provide output_language or output_languages" },
 			400,
 		);
@@ -1071,7 +1092,7 @@ app.post("/api/video-translate", async (c) => {
 	if (body.output_language && body.output_languages) {
 		return jsonTranslateApi(
 			c,
-			"video-translate",
+			routeLabel,
 			{ error: "Use only one of output_language or output_languages" },
 			400,
 		);
@@ -1126,9 +1147,18 @@ app.post("/api/video-translate", async (c) => {
 		brand_voice_id: body.brand_voice_id ?? null,
 		tts_voice: body.tts_voice ?? null,
 		voice_id: body.voice_id ?? null,
+		...(longPipeline
+			? {
+					chunk_sec: body.chunk_sec ?? body.chunk_duration_sec ?? null,
+					chunk_threshold_sec: body.chunk_threshold_sec ?? null,
+				}
+			: {}),
 	});
 
-	const out = await createVideoTranslateJobs({
+	const createFn = longPipeline
+		? createVideoTranslateLongJobs
+		: createVideoTranslateJobs;
+	const out = await createFn({
 		videoUrl: payload.video_url,
 		body: {
 			output_language: payload.output_language,
@@ -1152,6 +1182,12 @@ app.post("/api/video-translate", async (c) => {
 			brand_voice_id: body.brand_voice_id,
 			tts_voice: body.tts_voice,
 			voice_id: body.voice_id,
+			...(longPipeline
+				? {
+						chunk_sec: body.chunk_sec ?? body.chunk_duration_sec,
+						chunk_threshold_sec: body.chunk_threshold_sec,
+					}
+				: {}),
 		},
 	});
 	const status = out.httpStatus ?? 200;
@@ -1165,9 +1201,23 @@ app.post("/api/video-translate", async (c) => {
 		videoTranslateId: createdId,
 		captionUrl: rest?.data?.caption_url,
 	});
-	return jsonTranslateApi(c, "video-translate", rest, status);
-});
+	return jsonTranslateApi(c, routeLabel, rest, status);
+}
 
+app.post("/api/video-translate", (c) =>
+	handleVideoTranslateCreateRequest(c, { longPipeline: false }),
+);
+
+/**
+ * POST /api/video-translate/long
+ * Same body as /api/video-translate. Splits long source with ffmpeg into ~chunk_sec
+ * segments, translates in parallel, then concatenates. Poll GET /api/video-translate/:id
+ * (parent id). Retry failed chunks via POST /api/video-translate/:id/retry.
+ * Optional: chunk_sec (default 180), chunk_threshold_sec (default 240).
+ */
+app.post("/api/video-translate/long", (c) =>
+	handleVideoTranslateCreateRequest(c, { longPipeline: true }),
+);
 /** GET /api/video-translate/:id — job status (Firestore); transcript, caption string, caption_url when success */
 app.get("/api/video-translate/:id", async (c) => {
 	const id = c.req.param("id");
@@ -1180,6 +1230,38 @@ app.get("/api/video-translate/:id", async (c) => {
 		captionUrl: d?.caption_url,
 	});
 	return c.json(rest, status);
+});
+
+/**
+ * POST /api/video-translate/:id/retry
+ * Re-queue a failed chunk (or all failed chunks on a parent), or re-run parent concat.
+ */
+app.post("/api/video-translate/:id/retry", async (c) => {
+	const id = c.req.param("id");
+	const vtAuthHdr =
+		c.req.header("Authorization") || c.req.header("authorization");
+	const vtAuthToken = vtAuthHdr?.startsWith("Bearer ")
+		? vtAuthHdr.slice(7).trim()
+		: vtAuthHdr?.trim();
+	if (!vtAuthToken) {
+		return jsonTranslateApi(
+			c,
+			"video-translate",
+			{
+				error: "Authentication required",
+				code: "MISSING_AUTH_TOKEN",
+				details: "Provide a Bearer token in the Authorization header",
+			},
+			401,
+		);
+	}
+	const out = await retryVideoTranslateJob(id);
+	const status = out.httpStatus ?? 200;
+	const { httpStatus: _h, ...rest } = out;
+	applyVideoTranslateApiHeaders(c, {
+		videoTranslateId: rest?.data?.video_translate_id || id,
+	});
+	return jsonTranslateApi(c, "video-translate", rest, status);
 });
 
 app.get("/", (c) => {
@@ -1611,10 +1693,10 @@ app.get("/api/viral-clip-cut/:id", async (c) => {
 });
 
 
-// ─── Blog → video (scrape + 3 OpenRouter agents + TTS + FFmpeg) ───────────────
+// ─── Blog → video (scrape text/images + AI scene plan + TTS + FFmpeg) ──────────
 //
-// POST /api/blog-to-video — { url, target_duration?, language?, model?, tts_voice?, aspect?, style? }
-// GET  /api/blog-to-video/:id — job status; video_url + script + render_plan + style when success
+// POST /api/blog-to-video — { url|content, images?, target_duration?, language?, model?, tts_voice?, aspect?, style? }
+// GET  /api/blog-to-video/:id — status; video_url + source_images + render_plan + style when successful
 
 function applyBlogToVideoApiHeaders(c, opts = {}) {
 	const { blogToVideoId, videoUrl } = opts;
@@ -1633,7 +1715,7 @@ const BLOG_TO_VIDEO_POST_RATE_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * POST /api/blog-to-video
- * JSON: { url | blog_url, target_duration?, language?, model?, tts_voice?, aspect?, content?, style? }
+ * JSON: { url | blog_url, content?, images?, target_duration?, language?, model?, tts_voice?, aspect?, style? }
  * Auth: non-empty Authorization (Bearer token). Rate limited per IP.
  */
 app.post("/api/blog-to-video", async (c) => {
